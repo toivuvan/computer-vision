@@ -62,7 +62,9 @@ class DetectionLoss(nn.Module):
         loss_obj = loss_obj_all[obj_mask].sum() if obj_mask.sum() > 0 else 0.0
         loss_noobj = loss_obj_all[noobj_mask].sum()
         
-        total_obj_loss = self.lambda_obj * loss_obj + self.lambda_noobj * loss_noobj
+        # Grid Normalization: scale objectness loss relative to standard 448x448 grid size (S=28, S^2=784)
+        grid_normalization = (S * S) / 784.0
+        total_obj_loss = (self.lambda_obj * loss_obj + self.lambda_noobj * loss_noobj) / grid_normalization
         
         # Check if there are any objects in this batch
         num_pos = obj_mask.sum().item()
@@ -157,6 +159,12 @@ class DetectionLoss(nn.Module):
         loss_l1 = self.smooth_l1(p_coords_activated, t_coords)
         
         total_box_loss = loss_ciou + 0.3 * loss_l1
+        
+        # Instance Normalization: scale class and box loss based on positive instances in the batch
+        # assuming a reference of 5.0 objects per image on average (32 * 5 = 160 per batch)
+        avg_objs_per_image = 5.0
+        total_class_loss = (total_class_loss / num_pos) * (batch_size * avg_objs_per_image)
+        total_box_loss = (total_box_loss / num_pos) * (batch_size * avg_objs_per_image)
         
         # Combine all losses
         loss = (total_obj_loss + self.lambda_class * total_class_loss + self.lambda_box * total_box_loss) / batch_size

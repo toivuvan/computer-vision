@@ -261,9 +261,20 @@ def train(args):
         epoch_loss = 0.0
         progress_bar = tqdm(train_loader, desc=f"Training Epoch {epoch+1}")
         
-        for images, targets, _ in progress_bar:
+        for batch_idx, (images, targets, _) in enumerate(progress_bar):
             images = images.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
+            
+            # Linear Learning Rate Warm-up during first 3 epochs to protect pre-trained weights
+            warmup_epochs = 3
+            total_warmup_steps = warmup_epochs * len(train_loader)
+            global_step = epoch * len(train_loader) + batch_idx
+            if global_step < total_warmup_steps:
+                factor = (global_step + 1) / total_warmup_steps
+                for g_idx, g in enumerate(optimizer.param_groups):
+                    # g_idx 0 is backbone, g_idx 1 is head
+                    base_lr = args.lr * 0.1 if g_idx == 0 else args.lr
+                    g['lr'] = base_lr * factor
             
             optimizer.zero_grad(set_to_none=True)
             
@@ -278,8 +289,13 @@ def train(args):
                 outputs = model(images)
                 loss = criterion(outputs, targets)
                 
-            # Backward and Optimizer step using GradScaler
+            # Backward and Optimizer step using GradScaler with Gradient Norm Clipping
             scaler.scale(loss).backward()
+            
+            # Unscale gradients before clipping
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            
             scaler.step(optimizer)
             scaler.update()
             

@@ -15,8 +15,8 @@ def parse_args():
     parser.add_argument("--image_dir", required=True, type=str, help="Directory containing images to predict")
     parser.add_argument("--output", required=True, type=str, help="Path to save predictions predictions.json")
     parser.add_argument("--checkpoint", type=str, default="./models/best.pth", help="Path to best.pth checkpoint")
-    parser.add_argument("--conf_threshold", type=float, default=0.15, help="Confidence threshold")
-    parser.add_argument("--iou_threshold", type=float, default=0.45, help="IoU threshold for NMS")
+    parser.add_argument("--conf_threshold", type=float, default=0.05, help="Confidence threshold")
+    parser.add_argument("--iou_threshold", type=float, default=0.50, help="IoU threshold for NMS")
     return parser.parse_args()
 
 def main():
