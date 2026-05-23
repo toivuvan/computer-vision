@@ -33,7 +33,11 @@ def main():
         raise FileNotFoundError(f"Checkpoint not found at '{args.checkpoint}'. Make sure you train the model first.")
         
     print(f"Loading checkpoint from: {args.checkpoint}")
-    checkpoint = torch.load(args.checkpoint, map_location=device)
+    try:
+        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    except TypeError:
+        # Fallback for very old PyTorch versions that do not support weights_only
+        checkpoint = torch.load(args.checkpoint, map_location=device)
     
     # Robustly handle different checkpoint save formats
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:

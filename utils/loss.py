@@ -2,15 +2,30 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+def focal_loss_with_logits(inputs, targets, alpha=0.25, gamma=2.0):
+    """
+    Focal Loss for binary targets.
+    alpha: balance factor for positive/negative classes
+    gamma: focusing parameter to down-weight easy background examples
+    """
+    bce = nn.functional.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
+    inputs_sig = torch.sigmoid(inputs)
+    p_t = inputs_sig * targets + (1 - inputs_sig) * (1 - targets)
+    loss = bce * ((1 - p_t) ** gamma)
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+    return loss
+
 class DetectionLoss(nn.Module):
     """
     Custom Loss Function for Anchor-Free Object Detector.
     Combines:
-    - Binary Cross Entropy (BCE) with logits for Objectness (positive/negative cells).
-    - Cross Entropy for class probabilities.
-    - Custom CIoU (Complete IoU) Loss + Smooth L1 Loss for bounding boxes.
+    - Focal Loss for Objectness (positive/negative cells).
+    - Weighted Cross Entropy for class probabilities.
+    - Custom CIoU (Complete IoU) Loss + Activated Smooth L1 Loss for bounding boxes.
     """
-    def __init__(self, lambda_obj=5.0, lambda_noobj=0.2, lambda_class=1.0, lambda_box=2.0):
+    def __init__(self, lambda_obj=5.0, lambda_noobj=1.0, lambda_class=1.0, lambda_box=2.0, class_weights=None):
         super(DetectionLoss, self).__init__()
         self.lambda_obj = lambda_obj
         self.lambda_noobj = lambda_noobj
@@ -18,7 +33,7 @@ class DetectionLoss(nn.Module):
         self.lambda_box = lambda_box
         
         self.bce_logits = nn.BCEWithLogitsLoss(reduction='none')
-        self.ce_loss = nn.CrossEntropyLoss(reduction='sum')
+        self.ce_loss = nn.CrossEntropyLoss(weight=class_weights, reduction='sum')
         self.smooth_l1 = nn.SmoothL1Loss(reduction='sum')
 
     def forward(self, predictions, targets):
@@ -42,8 +57,8 @@ class DetectionLoss(nn.Module):
         obj_mask = (target_obj == 1.0)
         noobj_mask = (target_obj == 0.0)
         
-        # 1. Objectness Loss (BCE Loss with logits)
-        loss_obj_all = self.bce_logits(pred_obj, target_obj)
+        # 1. Objectness Loss (Focal Loss to handle extreme background cell imbalance)
+        loss_obj_all = focal_loss_with_logits(pred_obj, target_obj, alpha=0.25, gamma=2.0)
         loss_obj = loss_obj_all[obj_mask].sum() if obj_mask.sum() > 0 else 0.0
         loss_noobj = loss_obj_all[noobj_mask].sum()
         
@@ -137,10 +152,9 @@ class DetectionLoss(nn.Module):
         ciou = iou - d_term - alpha * v
         loss_ciou = (1.0 - ciou).sum()
         
-        # Bbox smooth L1 regularization on raw grid logits to stabilize early training
-        # We target sigmoid-inverse targets in grid-coordinates
-        # We can map predicted grid logits directly to targets in grid-coordinates
-        loss_l1 = self.smooth_l1(p_coords, t_coords)
+        # Bbox smooth L1 regularization on activated predictions in [0, 1] to stabilize training
+        p_coords_activated = torch.sigmoid(p_coords)
+        loss_l1 = self.smooth_l1(p_coords_activated, t_coords)
         
         total_box_loss = loss_ciou + 0.3 * loss_l1
         

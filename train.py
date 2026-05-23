@@ -211,16 +211,39 @@ def train(args):
     
     # 4. Instantiate Model, Loss, Optimizer, and Cosine Scheduler
     model = ResNetYOLO(pretrained=True).to(device)
-    criterion = DetectionLoss().to(device)
     
-    # AdamW is robust for object detection heads
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    # Compute inverse frequency class weights to combat extreme class imbalance
+    # Frequency counts: person: 5829, car: 1339, dog: 1028, cat: 833, chair: 1613
+    # Absolute counts sum to 10642 annotations. Inverse frequency weights are:
+    class_weights = torch.tensor([1.83, 7.95, 10.35, 12.78, 6.60], dtype=torch.float32).to(device)
+    # Normalize weights so that their mean is 1.0 (sums to num_classes = 5)
+    class_weights = class_weights / class_weights.sum() * 5.0
+    
+    criterion = DetectionLoss(class_weights=class_weights).to(device)
+    
+    # Differential Learning Rates: fine-tune backbone 10x slower than the head
+    backbone_params = []
+    head_params = []
+    for name, param in model.named_parameters():
+        if "backbone" in name:
+            backbone_params.append(param)
+        else:
+            head_params.append(param)
+            
+    optimizer = torch.optim.AdamW([
+        {"params": backbone_params, "lr": args.lr * 0.1}, # 10x smaller learning rate for backbone parameters
+        {"params": head_params, "lr": args.lr}            # normal learning rate for head parameters
+    ], weight_decay=args.weight_decay)
+    
     # Cosine learning rate decay for smooth convergence
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     
-    # GradScaler for Mixed Precision (AMP) on GPU T4
-    scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
-    
+    # Version-safe modern GradScaler for Mixed Precision (AMP)
+    try:
+        scaler = torch.amp.GradScaler('cuda', enabled=torch.cuda.is_available())
+    except (TypeError, ValueError, AttributeError):
+        scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
+        
     best_map = 0.0
     scales = [384, 416, 448, 480] # Multi-scale resolutions (multiples of 32)
     
@@ -244,8 +267,14 @@ def train(args):
             
             optimizer.zero_grad(set_to_none=True)
             
+            # Autocast context helper for version safety in PyTorch 2.6+
+            try:
+                autocast_context = torch.amp.autocast('cuda', enabled=torch.cuda.is_available())
+            except (TypeError, ValueError, AttributeError):
+                autocast_context = torch.cuda.amp.autocast(enabled=torch.cuda.is_available())
+                
             # Forward pass under Mixed Precision autocast
-            with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+            with autocast_context:
                 outputs = model(images)
                 loss = criterion(outputs, targets)
                 
