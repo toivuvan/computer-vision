@@ -1,6 +1,6 @@
-# Mô hình Phát hiện Đối tượng Anchor-Free từ đầu với Backbone ResNet-34 (ResNetYOLO)
+# Mô hình Phát hiện Đối tượng Anchor-Free từ đầu với Backbone ResNet-50 & FPN (ResNetYOLO)
 
-Mô hình **ResNetYOLO** được xây dựng và tối ưu hóa tối đa nhằm mục đích phát hiện đối tượng từ đầu (Object Detection from scratch) trên GPU T4 của nền tảng **Lightning AI** (hoặc các GPU NVIDIA khác). Mô hình sử dụng mạng trích xuất đặc trưng `ResNet-34` mạnh mẽ kết hợp cùng Detection Head tùy biến tích chập mịn ($14 \times 14$), hàm mất mát tối tân **CIoU Loss**, tăng cường dữ liệu nhiều kích thước (**Multi-Scale Training**) và tăng tốc huấn luyện bằng **Độ chính xác hỗn hợp (Mixed Precision - AMP)**.
+Mô hình **ResNetYOLO** được xây dựng và tối ưu hóa tối đa nhằm mục đích phát hiện đối tượng từ đầu (Object Detection from scratch) trên GPU T4 của nền tảng **Lightning AI** (hoặc các GPU NVIDIA khác). Mô hình sử dụng mạng trích xuất đặc trưng `ResNet-50` mạnh mẽ kết hợp cùng **bộ đầu FPN (Feature Pyramid Network)** dung hợp đặc trưng đa quy mô (stride-16 và stride-32) cho ra lưới dự đoán mịn gấp đôi (**$28 \times 28$**), hàm mất mát tối tân **CIoU Loss**, tăng cường dữ liệu nhiều kích thước (**Multi-Scale Training**) và tăng tốc huấn luyện bằng **Độ chính xác hỗn hợp (Mixed Precision - AMP)**.
 
 ---
 
@@ -10,13 +10,13 @@ Mô hình **ResNetYOLO** được xây dựng và tối ưu hóa tối đa nhằ
 <my_submission>/
 ├── models/
 │   ├── __init__.py
-│   └── detector.py            # Định nghĩa kiến trúc mô hình (ResNet-34 + Custom Head)
+│   └── detector.py            # Định nghĩa kiến trúc mô hình (ResNet-50 + FPN Fusion)
 ├── utils/
 │   ├── __init__.py
 │   ├── dataset.py             # Bộ đọc dữ liệu nâng cao, Augmentations & Multi-Scale
-│   ├── loss.py                # Hàm mất mát tùy chỉnh CIoU Loss + Smooth L1
+│   ├── loss.py                # Hàm mất mát tùy chỉnh CIoU Loss + Smooth L1 + Focal Loss
 │   └── nms.py                 # Giải mã hộp bao & thuật toán Class-wise NMS
-├── train.py                   # Script huấn luyện chính trên GPU (AMP + Cosine Decay)
+├── train.py                   # Script huấn luyện chính trên GPU (AMP + Cosine Decay + LR vi sai)
 ├── predict.py                 # Script chạy suy luận chuẩn định dạng đầu ra
 ├── README.md                  # Tài liệu hướng dẫn sử dụng (tệp tin này)
 └── requirements.txt           # Danh sách các thư viện Python cần thiết
@@ -41,7 +41,7 @@ python train.py \
   --image_dir ./public/train/images \
   --val_image_dir ./public/val/images \
   --checkpoint_dir ./models/ \
-  --epochs 35 \
+  --epochs 50 \
   --batch_size 32 \
   --lr 1e-3
 ```
@@ -70,13 +70,16 @@ Xem nội dung tệp `score.json` để biết điểm số mAP@0.5 thực tế 
 
 ## 🛠️ Điểm nhấn Công nghệ của Giải pháp
 
-1. **Kiến trúc Anchor-Free Lưới Mịn ($14 \times 14$):**
-   * Giảm thiểu sự phức tạp của các hộp neo (Anchor Box), tăng tốc độ hội tụ và giảm lỗi định vị. Với độ phân giải $448 \times 448$, mạng lưới $14 \times 14$ ô lưới giúp bắt trọn cả các đối tượng có kích thước nhỏ hoặc xếp sát nhau.
-2. **Hàm mất mát Complete IoU (CIoU Loss):**
-   * Được tự triển khai 100% từ đầu trong `utils/loss.py`. Khác với Smooth L1 thông thường, CIoU Loss tối ưu hóa trực tiếp sự trùng khớp diện tích (IoU), khoảng cách tâm hộp bao, và sự tương đồng về tỉ lệ khung hình (Aspect Ratio), giúp đường bao dự đoán khớp khít tối đa với nhãn thực tế.
+1. **Kiến trúc FPN Dung hợp Đa quy mô & Lưới Mịn ($28 \times 28$):**
+   * Sử dụng **ResNet-50** kết hợp cấu trúc **FPN (Feature Pyramid Network)** dung hợp đặc trưng Stride-16 (`layer3`) và Stride-32 (`layer4`) để tạo ra bản đồ đặc trưng giàu ngữ nghĩa và sắc nét về không gian.
+   * Lưới dự đoán nâng lên **$28 \times 28$** (784 ô lưới), giúp phát hiện xuất sắc các vật thể nhỏ và crowded ở cự ly xa (như `chair` và `car`).
+2. **Hàm mất mát Focal Loss & CIoU Loss:**
+   * Tự triển khai **CIoU Loss (Complete IoU)** tối ưu hóa trực tiếp độ trùng khớp, khoảng cách tâm và tỉ lệ khung hình.
+   * Sử dụng **Focal Loss** cho Objectness để cân bằng triệt để sự mất cân xứng tiền cảnh/hậu cảnh của lưới $28 \times 28$ (tỉ lệ 1:100).
+   * Tích hợp **Trọng số phân phối lớp** để giải quyết mất cân bằng nhãn.
 3. **Tăng cường dữ liệu nhiều kích thước (Multi-Scale Training):**
-   * Ở mỗi epoch, mô hình tự động thay đổi độ phân giải đầu vào ngẫu nhiên trong khoảng $384$ đến $480$ pixel. Việc này bắt buộc mạng nơ-ron phải học cách trích xuất đặc trưng có tính bất biến với tỉ lệ kích thước (scale invariant), cải thiện mạnh mẽ khả năng phát hiện trên tập kiểm tra ẩn.
-4. **Tăng tốc Mixed Precision (AMP):**
-   * Tận dụng lõi Tensor Cores trên GPU T4 để tính toán song song với độ chính xác hỗn hợp FP16 và FP32, giúp giảm một nửa thời gian huấn luyện và tiết kiệm bộ nhớ đồ họa.
-5. **Class-wise Non-Maximum Suppression (NMS):**
-   * Triển khai thuật toán NMS độc lập trên từng lớp đối tượng để loại bỏ trùng lặp mà không gây triệt tiêu chéo giữa các đối tượng khác loại ở cùng một vị trí.
+   * Huấn luyện co dãn kích thước động từ $384$ đến $480$ pixel giúp mô hình có tính bất biến tỷ lệ (scale invariant).
+4. **Tốc độ học vi sai (Differential Learning Rates):**
+   * Backbone ResNet-50 chạy với learning rate $1e-4$ cực nhỏ, trong khi FPN và Custom Head chạy với learning rate $1e-3$ để tối ưu hóa hiệu năng tốt nhất.
+5. **AMP & NMS:**
+   * Tăng tốc Mixed Precision FP16 bằng `torch.amp` (không cảnh báo) và áp dụng Class-wise NMS để triệt tiêu hộp bao trùng lặp một cách tối ưu.

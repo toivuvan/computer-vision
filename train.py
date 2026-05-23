@@ -12,7 +12,7 @@ from utils.loss import DetectionLoss
 from utils.nms import decode_predictions, non_maximum_suppression, bbox_iou
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train custom ResNet-34 Object Detector.")
+    parser = argparse.ArgumentParser(description="Train custom ResNet-50 FPN Object Detector.")
     parser.add_argument("--train_data", required=True, type=str, help="Path to train.json")
     parser.add_argument("--val_data", required=True, type=str, help="Path to val.json")
     parser.add_argument("--image_dir", required=True, type=str, help="Path to train images")
@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument("--checkpoint_dir", required=True, type=str, help="Directory to save checkpoints")
     
     # Training Hyperparameters
-    parser.add_argument("--epochs", type=int, default=35, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
