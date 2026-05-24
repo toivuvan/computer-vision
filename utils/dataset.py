@@ -72,6 +72,7 @@ class DetectionDataset(Dataset):
                     ratio=(0.9, 1.11),
                     p=0.5
                 ),
+                A.Resize(self.resolution, self.resolution),  # ALWAYS ensure final resolution matches self.resolution
                 A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, border_mode=0, p=0.5),
                 A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
                 A.CoarseDropout(num_holes_range=(1, 8), hole_height_range=(8, 24), hole_width_range=(8, 24), p=0.3),  # Cutout
@@ -102,6 +103,7 @@ class DetectionDataset(Dataset):
                     ratio=(0.9, 1.11),
                     p=0.5
                 ),
+                A.Resize(self.resolution, self.resolution),  # ALWAYS ensure final resolution matches self.resolution
                 A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, border_mode=0, p=0.5),
                 A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
                 A.CoarseDropout(num_holes_range=(1, 8), hole_height_range=(8, 24), hole_width_range=(8, 24), p=0.3),  # Cutout
