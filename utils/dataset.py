@@ -17,7 +17,7 @@ class DetectionDataset(Dataset):
         self.image_dir = image_dir
         self.is_train = is_train
         self.resolution = resolution
-        self.grid_size = resolution // 16
+        self.grid_size = resolution // 8
         
         # Load classes
         # The 5 default classes are: "person", "car", "dog", "cat", "chair"
@@ -74,7 +74,7 @@ class DetectionDataset(Dataset):
         Dynamically update the target resolution and grid size for Multi-Scale training.
         """
         self.resolution = resolution
-        self.grid_size = resolution // 16
+        self.grid_size = resolution // 8
 
     def __len__(self):
         return len(self.examples)
