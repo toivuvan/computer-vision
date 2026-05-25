@@ -44,19 +44,22 @@ def decode_predictions(prediction, img_width, img_height, conf_threshold=0.15):
     # Channels 6-9: coordinates (sigmoid offsets and sizes)
     pred_coords = torch.sigmoid(prediction[6:10, :, :]) # (4, S, S)
     
-    # Combined scores for all classes across all grid cells
-    pred_scores = pred_obj.unsqueeze(0) * pred_class_probs # (5, S, S)
+    # For each cell, find the class with the maximum probability (argmax)
+    max_class_probs, max_class_indices = torch.max(pred_class_probs, dim=0) # (S, S)
     
-    # Find grid locations and classes exceeding threshold
-    class_indices, rows, cols = torch.where(pred_scores >= conf_threshold)
+    # Combined scores for the best class in each cell
+    scores = pred_obj * max_class_probs # (S, S)
+    
+    # Find grid locations exceeding threshold
+    rows, cols = torch.where(scores >= conf_threshold)
     
     decoded_boxes = []
-    for c_idx, row, col in zip(class_indices, rows, cols):
-        c_idx = c_idx.item()
+    for row, col in zip(rows, cols):
         row = row.item()
         col = col.item()
+        c_idx = max_class_indices[row, col].item()
         
-        score = pred_scores[c_idx, row, col].item()
+        score = scores[row, col].item()
         class_name = classes[c_idx]
         
         # Decode center x, y and width, height relative to cell and image
