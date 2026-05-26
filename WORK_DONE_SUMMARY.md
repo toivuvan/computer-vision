@@ -58,6 +58,11 @@ Khi `is_train=True`, dataset áp dụng một chuỗi tăng cường dữ liệu
 
 Mục tiêu của augmentation là làm mô hình bền hơn trước thay đổi về vị trí, tỉ lệ, góc quay, ánh sáng và hiện tượng che khuất một phần.
 
+Lưu ý cập nhật nhỏ gần đây trong pipeline augmentation:
+
+- `Affine` sử dụng `border_mode=0` (thay cho `mode=0`) để tương thích với các phiên bản mới của Albumentations.
+- `GaussNoise` được đơn giản hóa (dùng tham số mặc định) thay vì truyền `var_limit` để pipeline ổn định hơn giữa các phiên bản thư viện.
+
 ### 3.2. Tiền xử lý khi validation và inference
 
 Khi không train, ảnh chỉ được resize và normalize, không áp dụng augmentation ngẫu nhiên. Điều này giúp kết quả đánh giá và suy luận ổn định, nhất quán.
@@ -89,9 +94,15 @@ Nếu có nhiều object cùng rơi vào một ô lưới, hệ thống chọn o
 
 ## 5. Kiến trúc mô hình
 
-### 5.1. Backbone ResNet-50
+### 5.1. Backbone ConvNeXt-Tiny (thay cho ResNet-50)
 
-Mô hình dùng ResNet-50 làm backbone trích xuất đặc trưng. Các tầng chính của ResNet được giữ lại để học đặc trưng từ ảnh đầu vào.
+Mô hình đã được cập nhật để sử dụng `ConvNeXt-Tiny` làm backbone, thay vì `ResNet-50`. Những điểm chính:
+
+- `ConvNeXt-Tiny` có các stage trích xuất đặc trưng với kích thước kênh khác (stage2: 384 channels tại stride 16; stage3: 768 channels tại stride 32).
+- Các lớp projection FPN được điều chỉnh tương ứng (chiếu 384→256 và 768→256) để hợp nhất đặc trưng.
+- Module feature của backbone được đóng gói trong `backbone_features` và được truy xuất trực tiếp trong `forward()` để lấy `c3` (stride16) và `c4` (stride32).
+
+Việc chuyển sang `ConvNeXt-Tiny` giúp cải thiện biểu diễn không gian và có thể mang lại lợi ích hiệu năng/độ chính xác so với ResNet-50 trong nhiều trường hợp.
 
 ### 5.2. FPN fusion
 
@@ -162,7 +173,7 @@ Khi đổi resolution, grid size cũng thay đổi theo. Mục tiêu là giúp m
 
 ### 7.3. Differential learning rate
 
-Backbone ResNet-50 được học với learning rate nhỏ hơn head, để tránh phá hỏng đặc trưng đã học sẵn từ pretrain. Phần head được cập nhật mạnh hơn vì cần thích nghi nhanh với bài toán detection hiện tại.
+Backbone được học với learning rate nhỏ hơn head, để tránh phá hỏng đặc trưng đã học sẵn từ pretrain. Do chuyển sang `ConvNeXt-Tiny`, code hiện phân nhóm tham số bằng cách kiểm tra tên tham số chứa `backbone_features` để xác định nhóm backbone (lr nhỏ hơn). Phần head vẫn được cập nhật mạnh hơn để thích nghi nhanh với bài toán detection hiện tại.
 
 ### 7.4. Warm-up và scheduler
 
@@ -227,6 +238,8 @@ Từ toàn bộ pipeline trên, project đã hoàn thiện được một hệ t
 - training có multi-scale, warm-up, AMP và differential LR
 - suy luận với decode prediction và NMS
 - đánh giá bằng mAP@0.5
+
+- mô hình ConvNeXt-Tiny + FPN + head detection (thay cho ResNet-50 trong phiên bản gần đây)
 
 Nói ngắn gọn, đây là một quy trình detection end-to-end từ dữ liệu thô đến prediction cuối cùng.
 

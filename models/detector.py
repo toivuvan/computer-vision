@@ -4,7 +4,8 @@ import torchvision.models as models
 
 class ResNetYOLO(nn.Module):
     """
-    Object Detection Model using ConvNeXt-Tiny Backbone with FPN (Feature Pyramid Network).
+    Object Detection Model using ConvNeXt-Tiny Backbone with FPN (Feature Pyramid Network)
+    and Decoupled Detection Heads (separate Classification & Regression branches).
     Fuses semantic stage 3 (stride 32, 768 channels) and high-resolution stage 2 (stride 16, 384 channels) features.
     Outputs a fine-grained grid (S x S x 10) where S = resolution // 16.
     """
@@ -33,9 +34,8 @@ class ResNetYOLO(nn.Module):
         # FPN Bilinear Upsampling layer
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
                 
-        # Custom Detection Head
-        # Processes the fused map (batch, 512, H/16, W/16) and predicts (batch, 10, H/16, W/16)
-        self.head = nn.Sequential(
+        # 1. Decoupled Classification Branch (6 channels: 1 objectness + 5 class probabilities)
+        self.cls_head = nn.Sequential(
             nn.Conv2d(512, 256, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(256),
             nn.SiLU(), # Modern swish activation function
@@ -46,8 +46,22 @@ class ResNetYOLO(nn.Module):
             nn.SiLU(),
             nn.Dropout(0.3),
             
-            # Predict 10 output channels: 1 (objectness) + 5 (classes) + 4 (bbox coordinates)
-            nn.Conv2d(128, 10, kernel_size=1)
+            nn.Conv2d(128, 6, kernel_size=1)
+        )
+        
+        # 2. Decoupled Regression Branch (4 channels: x, y, w, h bbox coordinates)
+        self.reg_head = nn.Sequential(
+            nn.Conv2d(512, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.SiLU(),
+            nn.Dropout(0.3),
+            
+            nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.SiLU(),
+            nn.Dropout(0.3),
+            
+            nn.Conv2d(128, 4, kernel_size=1)
         )
 
     def forward(self, x):
@@ -79,7 +93,12 @@ class ResNetYOLO(nn.Module):
         # Concatenate features along the channel dimension (256 + 256 = 512 channels)
         fused = torch.cat([p3, p4_upsampled], dim=1) # shape: (batch, 512, H/16, W/16)
         
-        # Predict grid outputs
-        out = self.head(fused) # shape: (batch, 10, H/16, W/16)
+        # Predict grid outputs using independent specialized Decoupled Heads
+        cls_out = self.cls_head(fused) # shape: (batch, 6, H/16, W/16)
+        reg_out = self.reg_head(fused) # shape: (batch, 4, H/16, W/16)
+        
+        # Concatenate outputs back to (batch, 10, H/16, W/16) with original channel layout
+        # Channels 0-5 are classification (objectness + class scores), 6-9 are regression coordinates
+        out = torch.cat([cls_out, reg_out], dim=1)
         
         return out
