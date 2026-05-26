@@ -224,9 +224,8 @@ def train(args):
     # Differential Learning Rates: fine-tune backbone 10x slower than the head
     backbone_params = []
     head_params = []
-    backbone_layers = ["conv1", "bn1", "layer1", "layer2", "layer3", "layer4"]
     for name, param in model.named_parameters():
-        if any(layer in name for layer in backbone_layers):
+        if "backbone_features" in name:
             backbone_params.append(param)
         else:
             head_params.append(param)

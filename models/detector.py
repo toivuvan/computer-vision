@@ -4,41 +4,31 @@ import torchvision.models as models
 
 class ResNetYOLO(nn.Module):
     """
-    Object Detection Model using ResNet-50 Backbone with FPN (Feature Pyramid Network).
-    Fuses semantic layer4 (stride 32) and high-resolution layer3 (stride 16) features.
+    Object Detection Model using ConvNeXt-Tiny Backbone with FPN (Feature Pyramid Network).
+    Fuses semantic stage 3 (stride 32, 768 channels) and high-resolution stage 2 (stride 16, 384 channels) features.
     Outputs a fine-grained grid (S x S x 10) where S = resolution // 16.
     """
     def __init__(self, pretrained=True):
         super(ResNetYOLO, self).__init__()
         
-        # Safe loading of torchvision resnet50 backbone
+        # Safe loading of torchvision convnext_tiny backbone
         try:
             if pretrained:
-                from torchvision.models import ResNet50_Weights
-                backbone = models.resnet50(weights=ResNet50_Weights.DEFAULT)
+                from torchvision.models import ConvNeXt_Tiny_Weights
+                backbone = models.convnext_tiny(weights=ConvNeXt_Tiny_Weights.DEFAULT)
             else:
-                backbone = models.resnet50(weights=None)
+                backbone = models.convnext_tiny(weights=None)
         except (ImportError, TypeError):
             # Fallback for older torchvision versions
-            backbone = models.resnet50(pretrained=pretrained)
+            backbone = models.convnext_tiny(pretrained=pretrained)
             
-        # Extract features at multiple levels of ResNet-50
-        self.conv1 = backbone.conv1
-        self.bn1 = backbone.bn1
-        self.relu = backbone.relu
-        self.maxpool = backbone.maxpool
-        
-        self.layer1 = backbone.layer1 # Output stride 4: channels 256
-        self.layer2 = backbone.layer2 # Output stride 8: channels 512
-        self.layer3 = backbone.layer3 # Output stride 16: channels 1024
-        self.layer4 = backbone.layer4 # Output stride 32: channels 2048
-        
-        # Keep all backbone layers trainable to support Differential Learning Rates
-        # (Fine-tuning backbone parameters at a smaller learning rate on GPU)
+        # Store features submodule so PyTorch registers and tracks all its parameters
+        self.backbone_features = backbone.features
         
         # FPN Projection layers (reduce channels to 256)
-        self.proj_l4 = nn.Conv2d(2048, 256, kernel_size=1, bias=False)
-        self.proj_l3 = nn.Conv2d(1024, 256, kernel_size=1, bias=False)
+        # ConvNeXt stage 3 outputs 768 channels; stage 2 outputs 384 channels
+        self.proj_l4 = nn.Conv2d(768, 256, kernel_size=1, bias=False)
+        self.proj_l3 = nn.Conv2d(384, 256, kernel_size=1, bias=False)
         
         # FPN Bilinear Upsampling layer
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
@@ -61,16 +51,23 @@ class ResNetYOLO(nn.Module):
         )
 
     def forward(self, x):
-        # Initial stages
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-        
-        c1 = self.layer1(x)
-        c2 = self.layer2(c1)
-        c3 = self.layer3(c2) # stride 16: (batch, 1024, H/16, W/16)
-        c4 = self.layer4(c3) # stride 32: (batch, 2048, H/32, W/32)
+        # Extract features using ConvNeXt-Tiny stage submodules
+        # index 0: Stem (stride 4, outputs 96)
+        # index 1: Stage 0 (stride 4, outputs 96)
+        # index 2: Downsample (stride 8, outputs 192)
+        # index 3: Stage 1 (stride 8, outputs 192)
+        # index 4: Downsample (stride 16, outputs 384)
+        # index 5: Stage 2 (stride 16, outputs 384)
+        # index 6: Downsample (stride 32, outputs 768)
+        # index 7: Stage 3 (stride 32, outputs 768)
+        x = self.backbone_features[0](x)
+        x = self.backbone_features[1](x)
+        x = self.backbone_features[2](x)
+        x = self.backbone_features[3](x)
+        x = self.backbone_features[4](x)
+        c3 = self.backbone_features[5](x) # stride 16: (batch, 384, H/16, W/16)
+        x = self.backbone_features[6](c3)
+        c4 = self.backbone_features[7](x) # stride 32: (batch, 768, H/32, W/32)
         
         # Project layers to equal channels (256)
         p4 = self.proj_l4(c4) # shape: (batch, 256, H/32, W/32)

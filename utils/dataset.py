@@ -73,8 +73,12 @@ class DetectionDataset(Dataset):
                     p=0.5
                 ),
                 A.Resize(self.resolution, self.resolution),  # ALWAYS ensure final resolution matches self.resolution
-                A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, border_mode=0, p=0.5),
-                A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
+                A.Affine(scale=(0.9, 1.1), translate_percent=(-0.05, 0.05), rotate=(-15, 15), shear=(-10, 10), mode=0, p=0.5),
+                A.CLAHE(clip_limit=2.0, p=0.3),
+                A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+                A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=20, val_shift_limit=20, p=0.5),
+                A.GaussNoise(var_limit=(10.0, 50.0), p=0.2),
+                A.MotionBlur(blur_limit=3, p=0.2),
                 A.CoarseDropout(num_holes_range=(1, 8), hole_height_range=(8, 24), hole_width_range=(8, 24), p=0.3),  # Cutout
                 A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2()
@@ -104,8 +108,12 @@ class DetectionDataset(Dataset):
                     p=0.5
                 ),
                 A.Resize(self.resolution, self.resolution),  # ALWAYS ensure final resolution matches self.resolution
-                A.ShiftScaleRotate(shift_limit=0.05, scale_limit=0.1, rotate_limit=15, border_mode=0, p=0.5),
-                A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.5),
+                A.Affine(scale=(0.9, 1.1), translate_percent=(-0.05, 0.05), rotate=(-15, 15), shear=(-10, 10), mode=0, p=0.5),
+                A.CLAHE(clip_limit=2.0, p=0.3),
+                A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+                A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=20, val_shift_limit=20, p=0.5),
+                A.GaussNoise(var_limit=(10.0, 50.0), p=0.2),
+                A.MotionBlur(blur_limit=3, p=0.2),
                 A.CoarseDropout(num_holes_range=(1, 8), hole_height_range=(8, 24), hole_width_range=(8, 24), p=0.3),  # Cutout
                 A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2()
