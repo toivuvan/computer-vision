@@ -45,23 +45,22 @@ Mỗi ảnh sau đó được load trực tiếp từ thư mục ảnh tương �
 
 ### 3.1. Augmentation khi train
 
-Khi `is_train=True`, dataset áp dụng một chuỗi tăng cường dữ liệu bằng Albumentations để tăng khả năng tổng quát hóa của mô hình. Các phép biến đổi chính gồm:
+Khi `is_train=True`, dataset áp dụng một chuỗi tăng cường dữ liệu mở rộng bằng Albumentations để tăng khả năng tổng quát hóa và độ bền bỉ của mô hình. Các phép biến đổi chính gồm:
 
-- Horizontal Flip
-- RandomResizedCrop
-- Resize về đúng kích thước mong muốn
-- ShiftScaleRotate
-- ColorJitter
-- CoarseDropout để giả lập vùng bị che khuất
-- Normalize theo ImageNet mean/std
-- Chuyển sang tensor bằng `ToTensorV2`
+- **Horizontal Flip**: Lật ảnh theo chiều ngang ngẫu nhiên.
+- **RandomResizedCrop**: Cắt ảnh ngẫu nhiên và resize về kích thước lưới, giúp mô hình nhận diện đối tượng ở nhiều quy mô khác nhau.
+- **Resize**: Đảm bảo kích thước ảnh đầu ra trùng khớp chính xác với độ phân giải huấn luyện mong muốn.
+- **Affine**: Tăng cường biến dạng hình học bằng cách áp dụng các bộ biến đổi xoay ngẫu nhiên ($\pm 15^\circ$), dịch chuyển ($\pm 5\%$), co giãn ($0.9 - 1.1$), và cắt nghiêng ($\pm 10^\circ$). Sử dụng `border_mode=0` để tương thích hoàn hảo với các phiên bản Albumentations mới.
+- **CLAHE**: Cân bằng biểu đồ độ tương phản thích ứng cục bộ giúp nâng cao các chi tiết khó nhận dạng của ảnh.
+- **RandomBrightnessContrast**: Thay đổi ngẫu nhiên độ sáng và độ phản chiếu của hình ảnh.
+- **HueSaturationValue**: Biến đổi ngẫu nhiên các giá trị sắc thái (hue), độ bão hòa màu (saturation) và cường độ sáng (value).
+- **GaussNoise**: Thêm nhiễu Gaussian ngẫu nhiên để mô hình chống nhiễu tốt hơn trong môi trường thực tế.
+- **MotionBlur**: Làm mờ chuyển động ngẫu nhiên với kích thước kernel tối đa bằng 3 để mô phỏng ảnh chụp khi đối tượng hoặc camera di chuyển.
+- **CoarseDropout (Cutout)**: Giả lập các vùng bị che khuất bằng cách tạo ngẫu nhiên từ 1 đến 8 lỗ trống có kích thước từ $8 \times 8$ đến $24 \times 24$ pixel.
+- **Normalize**: Chuẩn hóa pixel theo trị trung bình (mean) và độ lệch chuẩn (std) của bộ dữ liệu ImageNet.
+- **ToTensorV2**: Chuyển đổi dữ liệu ảnh và bounding box sang tensor để truyền trực tiếp vào GPU.
 
-Mục tiêu của augmentation là làm mô hình bền hơn trước thay đổi về vị trí, tỉ lệ, góc quay, ánh sáng và hiện tượng che khuất một phần.
-
-Lưu ý cập nhật nhỏ gần đây trong pipeline augmentation:
-
-- `Affine` sử dụng `border_mode=0` (thay cho `mode=0`) để tương thích với các phiên bản mới của Albumentations.
-- `GaussNoise` được đơn giản hóa (dùng tham số mặc định) thay vì truyền `var_limit` để pipeline ổn định hơn giữa các phiên bản thư viện.
+Mục tiêu của augmentation là làm mô hình bền vững tuyệt đối trước các thay đổi phức tạp về vị trí, góc xoay, ánh sáng, nhiễu và hiện tượng che khuất một phần trong quá trình huấn luyện thực tế.
 
 ### 3.2. Tiền xử lý khi validation và inference
 
@@ -96,32 +95,50 @@ Nếu có nhiều object cùng rơi vào một ô lưới, hệ thống chọn o
 
 ### 5.1. Backbone ConvNeXt-Tiny (thay cho ResNet-50)
 
-Mô hình đã được cập nhật để sử dụng `ConvNeXt-Tiny` làm backbone, thay vì `ResNet-50`. Những điểm chính:
+Mô hình sử dụng `ConvNeXt-Tiny` làm backbone trích xuất đặc trưng, thay thế cho ResNet-50 ban đầu. Các đặc trưng đa cấp độ được trích xuất trực tiếp từ các Stage con của backbone:
 
-- `ConvNeXt-Tiny` có các stage trích xuất đặc trưng với kích thước kênh khác (stage2: 384 channels tại stride 16; stage3: 768 channels tại stride 32).
-- Các lớp projection FPN được điều chỉnh tương ứng (chiếu 384→256 và 768→256) để hợp nhất đặc trưng.
-- Module feature của backbone được đóng gói trong `backbone_features` và được truy xuất trực tiếp trong `forward()` để lấy `c3` (stride16) và `c4` (stride32).
+- **Stage 1 (`c2`)**: Stride 8, 192 channels — mang thông tin không gian, đường biên và chi tiết định vị rất sắc nét của đối tượng.
+- **Stage 2 (`c3`)**: Stride 16, 384 channels — sự cân bằng tối ưu giữa thông tin không gian và thông tin ngữ nghĩa.
+- **Stage 3 (`c4`)**: Stride 32, 768 channels — mang thông tin ngữ nghĩa bậc cao cực kỳ mạnh mẽ cho việc phân loại.
 
-Việc chuyển sang `ConvNeXt-Tiny` giúp cải thiện biểu diễn không gian và có thể mang lại lợi ích hiệu năng/độ chính xác so với ResNet-50 trong nhiều trường hợp.
+Việc chuyển đổi sang backbone ConvNeXt mang lại khả năng biểu diễn không gian vượt trội và nâng cao đáng kể độ chính xác nhận diện tổng thể.
 
-### 5.2. FPN fusion
+### 5.2. FPN & PANet Fusion (Path Aggregation Network)
 
-Đặc trưng từ `layer3` và `layer4` được đưa qua các lớp chiếu kênh 1x1, sau đó upsample và ghép lại theo chiều kênh. Cách này giúp kết hợp:
+Mô hình đã được tích hợp thêm cấu trúc **PANet (Path Aggregation Network)** song hành cùng **FPN (Feature Pyramid Network)** giúp kết hợp tối đa các luồng thông tin:
 
-- thông tin ngữ nghĩa mạnh từ layer sâu
-- thông tin không gian chi tiết hơn từ layer nông hơn
+1. **Top-Down Pathway (FPN)**:
+   * Các đặc trưng `c4`, `c3`, `c2` được chiếu kênh qua lớp tích chập $1 \times 1$ về cùng 256 kênh để thu được $P_4, P_3, P_2$.
+   * Đặc trưng cấp cao được upsample tuyến tính 2 lần (Bilinear Upsample) và cộng gộp (element-wise add) với đặc trưng cấp thấp hơn:
+     $$P_4 = \text{proj}(c_4)$$
+     $$P_3 = \text{proj}(c_3) + \text{Upsample}(P_4)$$
+     $$P_2 = \text{proj}(c_2) + \text{Upsample}(P_3)$$
+   * Đường dẫn từ trên xuống này giúp mang thông tin ngữ nghĩa mạnh mẽ bổ trợ cho các tầng thấp.
 
-### 5.3. Detection head
+2. **Bottom-Up Pathway (PANet)**:
+   * Nhằm tránh hao hụt chi tiết định vị từ các tầng cực nông, PANet bổ sung một đường dẫn ngược từ dưới lên:
+     $$N_2 = P_2$$
+     $$N_3 = P_3 + \text{SiLU}(\text{BatchNorm}(\text{Conv}_{3\times3,\,stride\,2}(N_2)))$$
+   * Việc sử dụng tích chập $3 \times 3$ với Stride 2 giúp nén đặc trưng định vị sắc nét ở mức $N_2$ (stride 8) truyền trực tiếp lên mức $N_3$ (stride 16) chỉ qua 1 kết nối cực ngắn.
 
-Sau khi fusion, feature map đi qua head convolution để dự đoán đầu ra `10 x S x S`.
+3. **Feature Fusion**:
+   * Đặc trưng $N_3$ (tích hợp không gian Bottom-Up) và đặc trưng $P_4\_upsampled$ (stride 16 upsample từ Stride 32 FPN) được ghép nối dọc theo chiều kênh (`torch.cat`), tạo ra đặc trưng hợp nhất có kích thước `512 x S x S` cung cấp cho các nhánh dự đoán.
 
-Đầu ra này tương ứng với:
+### 5.3. Decoupled detection heads (Nhánh dự đoán tách biệt)
 
-- objectness
-- class logits
-- bbox regression
+Thay vì sử dụng một detection head chung cho tất cả các nhiệm vụ, mô hình đã được cải tiến sử dụng **Decoupled Heads** (hai nhánh tách biệt hoàn toàn để dự đoán phân loại và hồi quy tọa độ). Sau khi FPN fusion tạo ra feature map có kích thước `512 x S x S`, luồng dữ liệu sẽ được chia làm hai nhánh song song:
 
-Như vậy mô hình hoạt động theo hướng anchor-free, dự đoán trực tiếp trên grid thay vì sinh anchor boxes.
+1. **Classification & Objectness Branch (`self.cls_head`)**:
+   - Nhận đầu vào 512 kênh, đi qua chuỗi tích chập: `Conv2d(512, 256) -> BatchNorm -> SiLU -> Dropout(0.3) -> Conv2d(256, 128) -> BatchNorm -> SiLU -> Dropout(0.3) -> Conv2d(128, 6)`.
+   - Đầu ra gồm **6 kênh**: 1 kênh độ tin cậy vật thể (`objectness`) và 5 kênh cho xác suất các lớp đối tượng (`class probabilities`).
+   
+2. **Regression Branch (`self.reg_head`)**:
+   - Nhận đầu vào 512 kênh, đi qua chuỗi tích chập độc lập tương tự: `Conv2d(512, 256) -> BatchNorm -> SiLU -> Dropout(0.3) -> Conv2d(256, 128) -> BatchNorm -> SiLU -> Dropout(0.3) -> Conv2d(128, 4)`.
+   - Đầu ra gồm **4 kênh**: tọa độ bounding box (`x, y, w, h`).
+
+Đầu ra từ hai nhánh này sau đó được ghép lại (concatenate) theo chiều kênh (`torch.cat([cls_out, reg_out], dim=1)`) để tạo ra tensor dự đoán cuối cùng dạng `10 x S x S` tương thích với cấu trúc target và luồng xử lý loss/suy luận phía sau.
+
+Việc thiết kế Decoupled Head giúp giảm xung đột đặc trưng giữa hai nhiệm vụ phân loại (cần các đặc trưng bất biến với các phép xoay/tịnh tiến) và định vị (cần đặc trưng nhạy cảm với không gian/tọa độ), từ đó cải thiện đáng kể tốc độ hội tụ và độ chính xác mAP.
 
 ## 6. Hàm loss
 
@@ -233,13 +250,11 @@ Từ toàn bộ pipeline trên, project đã hoàn thiện được một hệ t
 - đọc và chuẩn hóa dữ liệu annotation
 - augmentation dữ liệu khi train
 - mã hóa bbox thành lưới anchor-free
-- mô hình ResNet-50 + FPN + head detection
-- loss kết hợp focal loss, CE loss, CIoU và Smooth L1
-- training có multi-scale, warm-up, AMP và differential LR
-- suy luận với decode prediction và NMS
-- đánh giá bằng mAP@0.5
-
-- mô hình ConvNeXt-Tiny + FPN + head detection (thay cho ResNet-50 trong phiên bản gần đây)
+- mô hình ConvNeXt-Tiny + FPN + PANet + Decoupled Detection Heads (đã nâng cấp kiến trúc mạng định vị sắc nét đa chiều)
+- loss nâng cao kết hợp focal loss (cho objectness), CE loss có trọng số phân bổ lớp nghịch đảo (cho phân loại lớp), CIoU loss và Smooth L1 loss (cho hồi quy hộp)
+- training tối ưu hóa bằng multi-scale, warm-up, AMP (Mixed Precision) và differential LR (tốc độ học phân biệt cho backbone và head)
+- suy luận hiệu quả với decode prediction trên grid độ phân giải cao kết hợp class-wise NMS
+- đánh giá hiệu năng chính xác bằng mAP@0.5
 
 Nói ngắn gọn, đây là một quy trình detection end-to-end từ dữ liệu thô đến prediction cuối cùng.
 

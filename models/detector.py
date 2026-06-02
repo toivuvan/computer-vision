@@ -27,12 +27,19 @@ class ResNetYOLO(nn.Module):
         self.backbone_features = backbone.features
         
         # FPN Projection layers (reduce channels to 256)
-        # ConvNeXt stage 3 outputs 768 channels; stage 2 outputs 384 channels
+        # ConvNeXt stage 3 outputs 768 channels; stage 2 outputs 384 channels; stage 1 outputs 192 channels (stride 8)
         self.proj_l4 = nn.Conv2d(768, 256, kernel_size=1, bias=False)
         self.proj_l3 = nn.Conv2d(384, 256, kernel_size=1, bias=False)
+        self.proj_l2 = nn.Conv2d(192, 256, kernel_size=1, bias=False)
         
         # FPN Bilinear Upsampling layer
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        
+        # PANet Bottom-Up layers
+        # Downsample from N2 (stride 8) to N3 (stride 16): Conv 3x3 Stride 2
+        self.downsample_n2_to_n3 = nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=False)
+        self.bn_n3 = nn.BatchNorm2d(256)
+        self.silu = nn.SiLU()
                 
         # 1. Decoupled Classification Branch (6 channels: 1 objectness + 5 class probabilities)
         self.cls_head = nn.Sequential(
@@ -77,21 +84,28 @@ class ResNetYOLO(nn.Module):
         x = self.backbone_features[0](x)
         x = self.backbone_features[1](x)
         x = self.backbone_features[2](x)
-        x = self.backbone_features[3](x)
-        x = self.backbone_features[4](x)
+        c2 = self.backbone_features[3](x) # stride 8: (batch, 192, H/8, W/8)
+        x = self.backbone_features[4](c2)
         c3 = self.backbone_features[5](x) # stride 16: (batch, 384, H/16, W/16)
         x = self.backbone_features[6](c3)
         c4 = self.backbone_features[7](x) # stride 32: (batch, 768, H/32, W/32)
         
+        # --- Top-Down Path (FPN) ---
         # Project layers to equal channels (256)
         p4 = self.proj_l4(c4) # shape: (batch, 256, H/32, W/32)
-        p3 = self.proj_l3(c3) # shape: (batch, 256, H/16, W/16)
+        p3 = self.proj_l3(c3) + self.upsample(p4) # shape: (batch, 256, H/16, W/16)
+        p2 = self.proj_l2(c2) + self.upsample(p3) # shape: (batch, 256, H/8, W/8)
         
-        # Bilinear Upsample p4 to match shape of p3
+        # --- Bottom-Up Path (PANet) ---
+        n2 = p2 # shape: (batch, 256, H/8, W/8)
+        # Downsample n2 to stride 16 and fuse with p3
+        n3 = p3 + self.silu(self.bn_n3(self.downsample_n2_to_n3(n2))) # shape: (batch, 256, H/16, W/16)
+        
+        # --- Feature Fusion for Single-Scale Head ---
         p4_upsampled = self.upsample(p4) # shape: (batch, 256, H/16, W/16)
         
         # Concatenate features along the channel dimension (256 + 256 = 512 channels)
-        fused = torch.cat([p3, p4_upsampled], dim=1) # shape: (batch, 512, H/16, W/16)
+        fused = torch.cat([n3, p4_upsampled], dim=1) # shape: (batch, 512, H/16, W/16)
         
         # Predict grid outputs using independent specialized Decoupled Heads
         cls_out = self.cls_head(fused) # shape: (batch, 6, H/16, W/16)
