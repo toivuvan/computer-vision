@@ -4,24 +4,25 @@ import torchvision.models as models
 
 class ResNetYOLO(nn.Module):
     """
-    Object Detection Model using ConvNeXt-Tiny Backbone with FPN (Feature Pyramid Network)
-    and Decoupled Detection Heads (separate Classification & Regression branches).
-    Fuses semantic stage 3 (stride 32, 768 channels) and high-resolution stage 2 (stride 16, 384 channels) features.
+    Object Detection Model using ConvNeXt-Small Backbone with FPN (Feature Pyramid Network),
+    PANet (Path Aggregation Network), and Decoupled Detection Heads (separate Classification & Regression branches).
+    ConvNeXt-Small has deeper stages (depth [3,3,27,3]) compared to ConvNeXt-Tiny ([3,3,9,3]),
+    providing richer feature representations while maintaining the same channel layout (192/384/768).
     Outputs a fine-grained grid (S x S x 10) where S = resolution // 16.
     """
     def __init__(self, pretrained=True):
         super(ResNetYOLO, self).__init__()
         
-        # Safe loading of torchvision convnext_tiny backbone
+        # Safe loading of torchvision convnext_small backbone
         try:
             if pretrained:
-                from torchvision.models import ConvNeXt_Tiny_Weights
-                backbone = models.convnext_tiny(weights=ConvNeXt_Tiny_Weights.DEFAULT)
+                from torchvision.models import ConvNeXt_Small_Weights
+                backbone = models.convnext_small(weights=ConvNeXt_Small_Weights.DEFAULT)
             else:
-                backbone = models.convnext_tiny(weights=None)
+                backbone = models.convnext_small(weights=None)
         except (ImportError, TypeError):
             # Fallback for older torchvision versions
-            backbone = models.convnext_tiny(pretrained=pretrained)
+            backbone = models.convnext_small(pretrained=pretrained)
             
         # Store features submodule so PyTorch registers and tracks all its parameters
         self.backbone_features = backbone.features

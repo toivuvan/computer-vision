@@ -21,7 +21,7 @@ def parse_args():
     
     # Training Hyperparameters
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training (16 recommended for T4 16GB with ConvNeXt-Small + Mosaic)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
     parser.add_argument("--multi_scale", action="store_true", default=True, help="Enable multi-scale training")
