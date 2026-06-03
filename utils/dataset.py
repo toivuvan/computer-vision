@@ -21,6 +21,7 @@ class DetectionDataset(Dataset):
         self.resolution = resolution
         self.grid_size = resolution // 16  # Stable Stride 16 Resolution Grid
         self.mosaic_prob = mosaic_prob if is_train else 0.0
+        self.strong_aug_disabled = False
         
         # Load classes
         self.classes = ["person", "car", "dog", "cat", "chair"]
@@ -70,6 +71,18 @@ class DetectionDataset(Dataset):
     def _build_transforms(self):
         """Build or rebuild all Albumentations transform pipelines for the current resolution."""
         if self.is_train:
+            if getattr(self, 'strong_aug_disabled', False):
+                # Light transform pipeline for no-augment epoch fine-tuning phase
+                # Retains HorizontalFlip and Normalize, but keeps bbox_params to avoid error.
+                self.transform = A.Compose([
+                    A.HorizontalFlip(p=0.5),
+                    A.Resize(self.resolution, self.resolution),
+                    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+                    ToTensorV2()
+                ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['category_ids'], min_visibility=0.3))
+                self.mosaic_transform = self.transform
+                return
+                
             # Standard single-image augmentation pipeline
             self.transform = A.Compose([
                 A.HorizontalFlip(p=0.5),
@@ -120,6 +133,19 @@ class DetectionDataset(Dataset):
         self.resolution = resolution
         self.grid_size = resolution // 16  # Stable Stride 16 Resolution Grid
         self._build_transforms()
+        
+    def disable_strong_augmentations(self):
+        """
+        Disable Mosaic and strong geometric/noise augmentations for the final training stage.
+        Swaps transform to a lighter pipeline (only HorizontalFlip and Normalize) to refine bbox predictions.
+        """
+        if getattr(self, 'strong_aug_disabled', False):
+            return
+            
+        self.mosaic_prob = 0.0
+        self.strong_aug_disabled = True
+        self._build_transforms()
+        print("\n=== [Dataset] Disabling Mosaic and strong augmentations (Affine, Cutout, Blur, Noise) for fine-tuning ===")
     
     def _load_image_and_boxes(self, idx):
         """Load a single image and its bounding boxes/labels by index."""

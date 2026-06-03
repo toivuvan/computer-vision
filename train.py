@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
     parser.add_argument("--multi_scale", action="store_true", default=True, help="Enable multi-scale training")
+    parser.add_argument("--no_aug_epochs", type=int, default=5, help="Number of final epochs to run without strong augmentations")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     return parser.parse_args()
 
@@ -249,6 +250,11 @@ def train(args):
     
     for epoch in range(args.epochs):
         model.train()
+        
+        # Check if we should disable strong augmentations (Mosaic, Affine, Cutout, etc.) for the final fine-tuning phase.
+        # Uses >= to support seamless resuming from checkpoints within the final phase.
+        if epoch >= (args.epochs - args.no_aug_epochs):
+            train_dataset.disable_strong_augmentations()
         
         # 5. Multi-Scale Training: pick a random resolution at the start of each epoch
         if args.multi_scale and torch.cuda.is_available():
