@@ -21,11 +21,12 @@ def parse_args():
     
     # Training Hyperparameters
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size for training (16 recommended for T4 16GB with ConvNeXt-Small + Mosaic)")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training (32 recommended for T4 16GB with ConvNeXt-Tiny + Mosaic/Mixup)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--weight_decay", type=float, default=1e-4, help="Weight decay")
+    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay")
     parser.add_argument("--multi_scale", action="store_true", default=True, help="Enable multi-scale training")
     parser.add_argument("--no_aug_epochs", type=int, default=5, help="Number of final epochs to run without strong augmentations")
+    parser.add_argument("--mixup_prob", type=float, default=0.15, help="Mixup augmentation probability")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     return parser.parse_args()
 
@@ -185,8 +186,8 @@ def train(args):
     
     # 3. Create Datasets
     # Default resolution is 448 (yielding 14x14 grid size)
-    train_dataset = DetectionDataset(args.train_data, args.image_dir, resolution=448, is_train=True)
-    val_dataset = DetectionDataset(args.val_data, args.val_image_dir, resolution=448, is_train=False)
+    train_dataset = DetectionDataset(args.train_data, args.image_dir, resolution=448, is_train=True, mixup_prob=args.mixup_prob)
+    val_dataset = DetectionDataset(args.val_data, args.val_image_dir, resolution=448, is_train=False, mixup_prob=0.0)
     
     print(f"Loaded {len(train_dataset)} training examples and {len(val_dataset)} validation examples.")
     

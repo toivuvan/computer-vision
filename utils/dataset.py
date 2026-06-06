@@ -15,12 +15,13 @@ class DetectionDataset(Dataset):
     Fully integrated with Albumentations for advanced augmentation (Cutout, ShiftScaleRotate, crops)
     and Multi-Scale Stride 16 grid target generation.
     """
-    def __init__(self, json_path, image_dir, resolution=448, is_train=True, mosaic_prob=0.5):
+    def __init__(self, json_path, image_dir, resolution=448, is_train=True, mosaic_prob=0.5, mixup_prob=0.15):
         self.image_dir = image_dir
         self.is_train = is_train
         self.resolution = resolution
         self.grid_size = resolution // 16  # Stable Stride 16 Resolution Grid
         self.mosaic_prob = mosaic_prob if is_train else 0.0
+        self.mixup_prob = mixup_prob if is_train else 0.0
         self.strong_aug_disabled = False
         
         # Load classes
@@ -136,16 +137,17 @@ class DetectionDataset(Dataset):
         
     def disable_strong_augmentations(self):
         """
-        Disable Mosaic and strong geometric/noise augmentations for the final training stage.
+        Disable Mosaic, Mixup, and strong geometric/noise augmentations for the final training stage.
         Swaps transform to a lighter pipeline (only HorizontalFlip and Normalize) to refine bbox predictions.
         """
         if getattr(self, 'strong_aug_disabled', False):
             return
             
         self.mosaic_prob = 0.0
+        self.mixup_prob = 0.0
         self.strong_aug_disabled = True
         self._build_transforms()
-        print("\n=== [Dataset] Disabling Mosaic and strong augmentations (Affine, Cutout, Blur, Noise) for fine-tuning ===")
+        print("\n=== [Dataset] Disabling Mosaic, Mixup, and strong augmentations (Affine, Cutout, Blur, Noise) for fine-tuning ===")
     
     def _load_image_and_boxes(self, idx):
         """Load a single image and its bounding boxes/labels by index."""
@@ -228,7 +230,8 @@ class DetectionDataset(Dataset):
     def __len__(self):
         return len(self.examples)
 
-    def __getitem__(self, idx):
+    def _get_single_transformed_image(self, idx):
+        """Helper to load and apply Albumentations transform to a single image (either Mosaic or standard single-image)."""
         use_mosaic = self.is_train and self.mosaic_prob > 0 and random.random() < self.mosaic_prob
         
         if use_mosaic:
@@ -237,8 +240,8 @@ class DetectionDataset(Dataset):
             try:
                 transformed = self.mosaic_transform(image=img_np, bboxes=bboxes, category_ids=labels)
                 img_tensor = transformed['image']
-                bboxes = transformed['bboxes']
-                labels = transformed['category_ids']
+                bboxes = list(transformed['bboxes'])
+                labels = list(transformed['category_ids'])
             except Exception as e:
                 fallback_transform = A.Compose([
                     A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
@@ -253,8 +256,8 @@ class DetectionDataset(Dataset):
             try:
                 transformed = self.transform(image=img_np, bboxes=bboxes, category_ids=labels)
                 img_tensor = transformed['image']
-                bboxes = transformed['bboxes']
-                labels = transformed['category_ids']
+                bboxes = list(transformed['bboxes'])
+                labels = list(transformed['category_ids'])
             except Exception as e:
                 fallback_transform = A.Compose([
                     A.Resize(self.resolution, self.resolution),
@@ -264,6 +267,33 @@ class DetectionDataset(Dataset):
                 img_tensor = fallback_transform(image=img_np)['image']
                 bboxes = []
                 labels = []
+                
+        return img_tensor, bboxes, labels
+
+    def __getitem__(self, idx):
+        # Get primary transformed image and targets
+        img_tensor1, bboxes1, labels1 = self._get_single_transformed_image(idx)
+        
+        # Apply Mixup Augmentation
+        use_mixup = self.is_train and self.mixup_prob > 0 and random.random() < self.mixup_prob
+        
+        if use_mixup:
+            idx2 = random.randint(0, len(self.examples) - 1)
+            img_tensor2, bboxes2, labels2 = self._get_single_transformed_image(idx2)
+            
+            # Blend coefficient r from Beta distribution beta(8.0, 8.0)
+            r = np.random.beta(8.0, 8.0)
+            
+            # Mix images
+            img_tensor = img_tensor1 * r + img_tensor2 * (1.0 - r)
+            
+            # Combine bounding boxes and labels
+            bboxes = bboxes1 + bboxes2
+            labels = labels1 + labels2
+        else:
+            img_tensor = img_tensor1
+            bboxes = bboxes1
+            labels = labels1
         
         example = self.examples[idx]
             

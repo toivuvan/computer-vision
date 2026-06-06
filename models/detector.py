@@ -4,25 +4,25 @@ import torchvision.models as models
 
 class ResNetYOLO(nn.Module):
     """
-    Object Detection Model using ConvNeXt-Small Backbone with FPN (Feature Pyramid Network),
+    Object Detection Model using ConvNeXt-Tiny Backbone with FPN (Feature Pyramid Network),
     PANet (Path Aggregation Network), and Decoupled Detection Heads (separate Classification & Regression branches).
-    ConvNeXt-Small has deeper stages (depth [3,3,27,3]) compared to ConvNeXt-Tiny ([3,3,9,3]),
-    providing richer feature representations while maintaining the same channel layout (192/384/768).
+    ConvNeXt-Tiny has stages with depth [3,3,9,3], providing lightweight and fast feature representations
+    while maintaining the same channel layout (192/384/768) as other models.
     Outputs a fine-grained grid (S x S x 10) where S = resolution // 16.
     """
     def __init__(self, pretrained=True):
         super(ResNetYOLO, self).__init__()
         
-        # Safe loading of torchvision convnext_small backbone
+        # Safe loading of torchvision convnext_tiny backbone
         try:
             if pretrained:
-                from torchvision.models import ConvNeXt_Small_Weights
-                backbone = models.convnext_small(weights=ConvNeXt_Small_Weights.DEFAULT)
+                from torchvision.models import ConvNeXt_Tiny_Weights
+                backbone = models.convnext_tiny(weights=ConvNeXt_Tiny_Weights.DEFAULT)
             else:
-                backbone = models.convnext_small(weights=None)
+                backbone = models.convnext_tiny(weights=None)
         except (ImportError, TypeError):
             # Fallback for older torchvision versions
-            backbone = models.convnext_small(pretrained=pretrained)
+            backbone = models.convnext_tiny(pretrained=pretrained)
             
         # Store features submodule so PyTorch registers and tracks all its parameters
         self.backbone_features = backbone.features
@@ -47,12 +47,12 @@ class ResNetYOLO(nn.Module):
             nn.Conv2d(512, 256, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(256),
             nn.SiLU(), # Modern swish activation function
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             
             nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.SiLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             
             nn.Conv2d(128, 6, kernel_size=1)
         )
@@ -62,12 +62,12 @@ class ResNetYOLO(nn.Module):
             nn.Conv2d(512, 256, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(256),
             nn.SiLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             
             nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(128),
             nn.SiLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             
             nn.Conv2d(128, 4, kernel_size=1)
         )

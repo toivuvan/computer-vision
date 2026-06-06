@@ -45,7 +45,7 @@ Mỗi ảnh sau đó được load trực tiếp từ thư mục ảnh tương �
 
 ### 3.1. Augmentation khi train
 
-Khi `is_train=True`, dataset áp dụng chiến lược tăng cường dữ liệu kép cực kỳ mạnh mẽ gồm **Mosaic Augmentation** kết hợp với **chuỗi Albumentations mở rộng** nhằm nâng cao độ bền bỉ và tối ưu hóa khả năng học của mô hình:
+Khi `is_train=True`, dataset áp dụng chiến lược tăng cường dữ liệu ba lớp (triple augmentation) cực kỳ mạnh mẽ gồm **Mosaic Augmentation**, **Mixup Augmentation**, kết hợp với **chuỗi Albumentations mở rộng** nhằm nâng cao độ bền bỉ, khả năng tổng quát và chống overfit hiệu quả:
 
 #### 3.1.1. Mosaic Augmentation (Tăng cường Mosaic)
 - **Cơ chế hoạt động**: Ghép ngẫu nhiên **4 ảnh** thành một ảnh lớn duy nhất theo tỷ lệ phân chia ngẫu nhiên qua điểm cắt $(x_c, y_c)$ trong khoảng diện tích trung tâm.
@@ -55,8 +55,13 @@ Khi `is_train=True`, dataset áp dụng chiến lược tăng cường dữ li�
   - Mô phỏng các đối tượng ở quy mô cực nhỏ, giúp cải thiện rõ rệt chỉ số mAP cho vật thể bé.
 - **Tần suất**: Được kích hoạt với xác suất **50%** (`mosaic_prob=0.5`) trên mỗi sample của batch huấn luyện. 50% còn lại giữ luồng xử lý ảnh đơn tiêu chuẩn.
 
-#### 3.1.2. Chuỗi Augmentation Albumentations
-Sau khi ảnh đi qua bước Mosaic (hoặc giữ ảnh đơn gốc), nó sẽ đi qua chuỗi biến đổi của Albumentations (đối với ảnh Mosaic, các bước Crop/Resize sẽ được bỏ qua để tránh méo ảnh):
+#### 3.1.2. Mixup Augmentation (Tăng cường trộn ảnh)
+- **Cơ chế hoạt động**: Lấy ngẫu nhiên hai mẫu ảnh đã qua biến đổi (standard hoặc mosaic), trộn chồng hình ảnh theo tỷ lệ $r$ được rút trích từ phân phối Beta $\beta(8.0, 8.0)$ ($img = img_1 \times r + img_2 \times (1.0 - r)$). Đồng thời, gộp danh sách các bounding boxes và labels của cả hai ảnh lại với nhau.
+- **Tác dụng**: Ép mô hình học được các đặc trưng phi tuyến tính sâu hơn, không bị phụ thuộc quá mức vào các cạnh biên cứng, giảm thiểu overfitting đáng kể khi huấn luyện mô hình sâu trên tập dữ liệu nhỏ.
+- **Tần suất**: Được kích hoạt với xác suất **15%** (`mixup_prob=0.15`) cho tập train và tự động tắt về `0.0` trong giai đoạn No-Augment cuối.
+
+#### 3.1.3. Chuỗi Augmentation Albumentations
+Sau khi ảnh đi qua bước Mosaic / Mixup (hoặc giữ ảnh đơn gốc), nó sẽ đi qua chuỗi biến đổi của Albumentations (đối với ảnh Mosaic/Mixup, các bước Crop/Resize sẽ được bỏ qua để tránh méo ảnh):
 - **Horizontal Flip**: Lật ảnh theo chiều ngang ngẫu nhiên.
 - **RandomResizedCrop**: Cắt ảnh ngẫu nhiên và resize về kích thước lưới (chỉ áp dụng cho ảnh đơn).
 - **Resize**: Đảm bảo kích thước ảnh đầu ra trùng khớp chính xác với độ phân giải huấn luyện mong muốn (chỉ áp dụng cho ảnh đơn).
@@ -72,13 +77,13 @@ Sau khi ảnh đi qua bước Mosaic (hoặc giữ ảnh đơn gốc), nó sẽ 
 
 Mục tiêu của augmentation là làm mô hình bền vững tuyệt đối trước các thay đổi phức tạp về vị trí, góc xoay, ánh sáng, nhiễu và hiện tượng che khuất một phần trong quá trình huấn luyện thực tế.
 
-#### 3.1.3. No-Augment Epochs (Giai đoạn vi chỉnh cuối)
+#### 3.1.4. No-Augment Epochs (Giai đoạn vi chỉnh cuối)
 - **Cơ chế hoạt động**: Trong **5 epoch cuối cùng** (được kiểm soát linh hoạt qua tham số `--no_aug_epochs`, mặc định là 5/50 epochs, tương ứng 10%), mô hình sẽ kích hoạt hàm `disable_strong_augmentations()`.
 - **Thay đổi cụ thể**:
-  - Tắt hoàn toàn Mosaic Augmentation (`mosaic_prob = 0.0`).
+  - Tắt hoàn toàn Mosaic và Mixup Augmentation (`mosaic_prob = 0.0`, `mixup_prob = 0.0`).
   - Loại bỏ các phép biến đổi hình học và nhiễu mạnh (Affine, CLAHE, Brightness/Contrast, Noise, Blur, Cutout).
   - Chỉ giữ lại phép lật ngang nhẹ (`A.HorizontalFlip(p=0.5)`), `A.Resize`, `A.Normalize`, và bắt buộc bảo toàn cấu hình `bbox_params` để tránh lỗi trích xuất nhãn.
-- **Tác dụng**: Giúp mô hình "hồi sức" và thích nghi hoàn hảo với phân phối ảnh tự nhiên thực tế trước khi kết thúc huấn luyện. Điều này triệt tiêu các box lỗi vẽ lệch ở rìa biên ảnh (vốn sinh ra do ảnh ghép Mosaic) và làm bounding box khít hơn, nâng mAP@0.5 lên thêm từ **1.0% - 2.0%** một cách tự nhiên.
+- **Tác dụng**: Giúp mô hình "hồi sức" và thích nghi hoàn hảo với phân phối ảnh tự nhiên thực tế trước khi kết thúc huấn luyện. Điều này triệt tiêu các box lỗi vẽ lệch ở rìa biên ảnh (vốn sinh ra do ảnh ghép Mosaic/Mixup) và làm bounding box khít hơn, nâng mAP@0.5 lên thêm từ **1.0% - 2.0%** một cách tự nhiên.
 
 ### 3.2. Tiền xử lý khi validation và inference
 
@@ -266,11 +271,11 @@ mAP@0.5 là thước đo quan trọng để biết mô hình không chỉ dự �
 Từ toàn bộ pipeline trên, project đã hoàn thiện được một hệ thống object detection hoàn chỉnh gồm:
 
 - đọc và chuẩn hóa dữ liệu annotation
-- augmentation dữ liệu khi train tích hợp Mosaic Augmentation (xác suất 50%) tăng mật độ đối tượng gấp 5.11 lần kết hợp chuỗi Albumentations sâu, đồng thời hỗ trợ chế độ **No-Augment Epochs** (tắt augment mạnh ở 5 epoch cuối) để tinh chỉnh tọa độ bounding box cực kỳ chuẩn xác
+- augmentation dữ liệu khi train tích hợp Mosaic Augmentation (xác suất 50%) và Mixup Augmentation (xác suất 15%), đồng thời hỗ trợ chế độ **No-Augment Epochs** (tắt augment mạnh ở 5 epoch cuối) để tinh chỉnh tọa độ bounding box cực kỳ chuẩn xác, hạn chế tối đa overfitting
 - mã hóa bbox thành lưới anchor-free
-- mô hình ConvNeXt-Small (53.3M tham số) + FPN + PANet + Decoupled Detection Heads (tạo ra kiến trúc trích xuất sâu sắc nét định vị đa chiều)
+- mô hình ConvNeXt-Tiny (31.7M tham số) + FPN + PANet + Decoupled Detection Heads (đã bổ sung Dropout = 0.4 trong decoupled heads để chống overfit)
 - loss nâng cao kết hợp focal loss (cho objectness), CE loss có trọng số phân bổ lớp nghịch đảo (cho phân loại lớp), CIoU loss và Smooth L1 loss (cho hồi quy hộp)
-- training tối ưu hóa bằng multi-scale, warm-up, AMP (Mixed Precision), AdamW optimizer và differential LR (tốc độ học phân biệt cho backbone và head)
+- training tối ưu hóa bằng multi-scale, warm-up, AMP (Mixed Precision), AdamW optimizer, differential LR và điều hòa trọng số Weight Decay tăng lên 5e-4
 - suy luận hiệu quả với decode prediction trên grid độ phân giải cao kết hợp class-wise NMS
 - đánh giá hiệu năng chính xác bằng mAP@0.5
 
