@@ -25,12 +25,21 @@ class DetectionLoss(nn.Module):
     - Weighted Cross Entropy for class probabilities.
     - Custom CIoU (Complete IoU) Loss + Activated Smooth L1 Loss for bounding boxes.
     """
-    def __init__(self, lambda_obj=5.0, lambda_noobj=0.5, lambda_class=1.0, lambda_box=3.0, class_weights=None):
+    def __init__(
+        self,
+        lambda_obj=5.0,
+        lambda_noobj=0.5,
+        lambda_class=1.0,
+        lambda_box=3.0,
+        class_weights=None,
+        avg_objs_per_image=1.5
+    ):
         super(DetectionLoss, self).__init__()
         self.lambda_obj = lambda_obj
         self.lambda_noobj = lambda_noobj
         self.lambda_class = lambda_class
         self.lambda_box = lambda_box
+        self.avg_objs_per_image = avg_objs_per_image
         
         self.bce_logits = nn.BCEWithLogitsLoss(reduction='none')
         self.ce_loss = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1, reduction='sum')
@@ -160,11 +169,10 @@ class DetectionLoss(nn.Module):
         
         total_box_loss = loss_ciou + 0.3 * loss_l1
         
-        # Instance Normalization: scale class and box loss based on positive instances in the batch
-        # assuming a reference of 5.0 objects per image on average (32 * 5 = 160 per batch)
-        avg_objs_per_image = 5.0
-        total_class_loss = (total_class_loss / num_pos) * (batch_size * avg_objs_per_image)
-        total_box_loss = (total_box_loss / num_pos) * (batch_size * avg_objs_per_image)
+        # Instance normalization: use the observed dataset density instead of an inflated constant.
+        # Train/val contain roughly 1.35-1.42 objects per image, so 1.5 is a conservative target.
+        total_class_loss = (total_class_loss / num_pos) * (batch_size * self.avg_objs_per_image)
+        total_box_loss = (total_box_loss / num_pos) * (batch_size * self.avg_objs_per_image)
         
         # Combine all losses
         loss = (total_obj_loss + self.lambda_class * total_class_loss + self.lambda_box * total_box_loss) / batch_size

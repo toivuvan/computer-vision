@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay")
     parser.add_argument("--multi_scale", action="store_true", default=True, help="Enable multi-scale training")
-    parser.add_argument("--no_aug_epochs", type=int, default=5, help="Number of final epochs to run without strong augmentations")
+    parser.add_argument("--no_aug_epochs", type=int, default=2, help="Number of final epochs to run without strong augmentations")
     parser.add_argument("--mixup_prob", type=float, default=0.25, help="Mixup augmentation probability")
     parser.add_argument("--max_detections", type=int, default=100, help="Maximum detections per image during validation")
     parser.add_argument("--save_top_k", type=int, default=5, help="Number of best validation checkpoints to keep for ensembling/averaging")
@@ -235,7 +235,7 @@ def train(args):
     # Normalize weights so that their mean is 1.0 (sums to num_classes = 5)
     class_weights = class_weights / class_weights.sum() * 5.0
     
-    criterion = DetectionLoss(class_weights=class_weights).to(device)
+    criterion = DetectionLoss(class_weights=class_weights, avg_objs_per_image=1.5).to(device)
     
     # Differential Learning Rates: fine-tune backbone 10x slower than the head
     backbone_params = []
