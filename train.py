@@ -268,7 +268,11 @@ def train(args):
             train_dataset.disable_strong_augmentations()
         
         # 5. Multi-Scale Training: pick a random resolution at the start of each epoch
-        if args.multi_scale and torch.cuda.is_available():
+        # During No-Augment phase, fix resolution to 448 (inference resolution) for stable fine-tuning
+        if is_no_aug_phase:
+            train_dataset.set_resolution(448)
+            print(f"\n--- Epoch {epoch+1}/{args.epochs} | No-Augment fine-tuning at fixed resolution: 448x448 ---")
+        elif args.multi_scale and torch.cuda.is_available():
             new_res = random.choice(scales)
             train_dataset.set_resolution(new_res)
             print(f"\n--- Epoch {epoch+1}/{args.epochs} | Multi-scale target resolution set to: {new_res}x{new_res} ---")

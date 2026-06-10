@@ -2,9 +2,9 @@ import os
 import argparse
 import json
 import torch
-import torchvision.transforms as T
-import torchvision.transforms.functional as TF
-from PIL import Image
+import cv2
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
 
 from models.detector import ResNetYOLO
@@ -14,10 +14,44 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run inference and generate object detection predictions.")
     parser.add_argument("--image_dir", required=True, type=str, help="Directory containing images to predict")
     parser.add_argument("--output", required=True, type=str, help="Path to save predictions predictions.json")
-    parser.add_argument("--checkpoint", type=str, default="./models/best.pth", help="Path to best.pth checkpoint")
+    parser.add_argument("--checkpoint", type=str, nargs="+", default=["./models/best.pth"], help="Path(s) to checkpoint(s) to load or average")
+    parser.add_argument("--resolution", type=int, default=448, help="Inference resolution")
     parser.add_argument("--conf_threshold", type=float, default=0.05, help="Confidence threshold")
     parser.add_argument("--iou_threshold", type=float, default=0.50, help="IoU threshold for NMS")
     return parser.parse_args()
+
+def average_checkpoints(checkpoint_paths, device):
+    """
+    Loads multiple PyTorch checkpoints and averages their model state dicts.
+    """
+    print(f"Loading and averaging {len(checkpoint_paths)} checkpoints...")
+    avg_state_dict = None
+    count = 0
+    
+    for path in checkpoint_paths:
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Checkpoint not found at '{path}'")
+        
+        print(f"  -> Loading: {path}")
+        try:
+            checkpoint = torch.load(path, map_location=device, weights_only=False)
+        except TypeError:
+            checkpoint = torch.load(path, map_location=device)
+            
+        state_dict = checkpoint['model_state_dict'] if (isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint) else checkpoint
+        
+        if avg_state_dict is None:
+            avg_state_dict = {k: v.clone().float() for k, v in state_dict.items()}
+        else:
+            for k, v in state_dict.items():
+                avg_state_dict[k] += v.float()
+        count += 1
+        
+    for k in avg_state_dict.keys():
+        avg_state_dict[k] = (avg_state_dict[k] / count).to(state_dict[k].dtype)
+        
+    print("Checkpoint averaging completed successfully.")
+    return avg_state_dict
 
 def main():
     args = parse_args()
@@ -29,27 +63,23 @@ def main():
     # 2. Instantiate and Load Model
     model = ResNetYOLO(pretrained=False)
     
-    if not os.path.exists(args.checkpoint):
-        raise FileNotFoundError(f"Checkpoint not found at '{args.checkpoint}'. Make sure you train the model first.")
-        
-    print(f"Loading checkpoint from: {args.checkpoint}")
+    # Load and average state dicts
     try:
-        checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    except TypeError:
-        # Fallback for very old PyTorch versions that do not support weights_only
-        checkpoint = torch.load(args.checkpoint, map_location=device)
-    
-    # Robustly handle different checkpoint save formats
-    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-        model.load_state_dict(checkpoint['model_state_dict'])
-    else:
-        model.load_state_dict(checkpoint)
+        avg_state_dict = average_checkpoints(args.checkpoint, device)
+        model.load_state_dict(avg_state_dict)
+    except Exception as e:
+        print(f"Error loading checkpoints: {e}")
+        raise e
         
     model = model.to(device)
     model.eval()
     
-    # Image Net normalization transforms
-    normalize = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    # Define exact same transform pipeline as val_dataset in train.py
+    transform = A.Compose([
+        A.Resize(args.resolution, args.resolution),
+        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ToTensorV2()
+    ])
     
     # 3. Locate Images
     valid_exts = ('.jpg', '.jpeg', '.png', '.bmp')
@@ -64,17 +94,20 @@ def main():
             img_path = os.path.join(args.image_dir, filename)
             
             try:
-                img = Image.open(img_path).convert("RGB")
-                w_orig, h_orig = img.size
+                # Load image with OpenCV in BGR, convert to RGB
+                img_bgr = cv2.imread(img_path)
+                if img_bgr is None:
+                    raise ValueError(f"Could not read image: {img_path}")
                 
-                # Resize and pre-process image
-                # Standard input size for optimal GPU model is 448x448
-                img_resized = img.resize((448, 448), Image.BILINEAR)
-                img_tensor = TF.to_tensor(img_resized)
-                img_tensor = normalize(img_tensor).unsqueeze(0).to(device)
+                h_orig, w_orig = img_bgr.shape[:2]
+                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                
+                # Apply transform
+                transformed = transform(image=img_rgb)
+                img_tensor = transformed['image'].unsqueeze(0).to(device)
                 
                 # Forward pass
-                output = model(img_tensor)  # (1, 10, 14, 14)
+                output = model(img_tensor)  # shape (1, 10, S, S)
                 
                 # Decode predictions
                 raw_boxes = decode_predictions(

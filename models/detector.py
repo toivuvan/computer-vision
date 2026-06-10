@@ -39,18 +39,18 @@ class ResNetYOLO(nn.Module):
         # PANet Bottom-Up layers
         # Downsample from N2 (stride 8) to N3 (stride 16): Conv 3x3 Stride 2
         self.downsample_n2_to_n3 = nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1, bias=False)
-        self.bn_n3 = nn.BatchNorm2d(256)
+        self.gn_n3 = nn.GroupNorm(num_groups=32, num_channels=256)
         self.silu = nn.SiLU()
                 
         # 1. Decoupled Classification Branch (6 channels: 1 objectness + 5 class probabilities)
         self.cls_head = nn.Sequential(
             nn.Conv2d(512, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256),
+            nn.GroupNorm(num_groups=32, num_channels=256),
             nn.SiLU(), # Modern swish activation function
             nn.Dropout(0.4),
             
             nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
+            nn.GroupNorm(num_groups=16, num_channels=128),
             nn.SiLU(),
             nn.Dropout(0.4),
             
@@ -60,12 +60,12 @@ class ResNetYOLO(nn.Module):
         # 2. Decoupled Regression Branch (4 channels: x, y, w, h bbox coordinates)
         self.reg_head = nn.Sequential(
             nn.Conv2d(512, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256),
+            nn.GroupNorm(num_groups=32, num_channels=256),
             nn.SiLU(),
             nn.Dropout(0.4),
             
             nn.Conv2d(256, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128),
+            nn.GroupNorm(num_groups=16, num_channels=128),
             nn.SiLU(),
             nn.Dropout(0.4),
             
@@ -100,7 +100,7 @@ class ResNetYOLO(nn.Module):
         # --- Bottom-Up Path (PANet) ---
         n2 = p2 # shape: (batch, 256, H/8, W/8)
         # Downsample n2 to stride 16 and fuse with p3
-        n3 = p3 + self.silu(self.bn_n3(self.downsample_n2_to_n3(n2))) # shape: (batch, 256, H/16, W/16)
+        n3 = p3 + self.silu(self.gn_n3(self.downsample_n2_to_n3(n2))) # shape: (batch, 256, H/16, W/16)
         
         # --- Feature Fusion for Single-Scale Head ---
         p4_upsampled = self.upsample(p4) # shape: (batch, 256, H/16, W/16)

@@ -33,7 +33,7 @@ class DetectionLoss(nn.Module):
         self.lambda_box = lambda_box
         
         self.bce_logits = nn.BCEWithLogitsLoss(reduction='none')
-        self.ce_loss = nn.CrossEntropyLoss(weight=class_weights, reduction='sum')
+        self.ce_loss = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.1, reduction='sum')
         self.smooth_l1 = nn.SmoothL1Loss(reduction='sum')
 
     def forward(self, predictions, targets):
