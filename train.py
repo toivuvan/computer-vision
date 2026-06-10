@@ -12,7 +12,7 @@ from utils.loss import DetectionLoss
 from utils.nms import decode_predictions, non_maximum_suppression, bbox_iou
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train custom ResNet-50 FPN Object Detector.")
+    parser = argparse.ArgumentParser(description="Train custom ConvNeXt-Tiny FPN Object Detector.")
     parser.add_argument("--train_data", required=True, type=str, help="Path to train.json")
     parser.add_argument("--val_data", required=True, type=str, help="Path to val.json")
     parser.add_argument("--image_dir", required=True, type=str, help="Path to train images")
@@ -27,6 +27,8 @@ def parse_args():
     parser.add_argument("--multi_scale", action="store_true", default=True, help="Enable multi-scale training")
     parser.add_argument("--no_aug_epochs", type=int, default=5, help="Number of final epochs to run without strong augmentations")
     parser.add_argument("--mixup_prob", type=float, default=0.25, help="Mixup augmentation probability")
+    parser.add_argument("--max_detections", type=int, default=100, help="Maximum detections per image during validation")
+    parser.add_argument("--save_top_k", type=int, default=5, help="Number of best validation checkpoints to keep for ensembling/averaging")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     return parser.parse_args()
 
@@ -60,7 +62,7 @@ def collate_fn(batch):
     metas = [item[2] for item in batch]
     return torch.stack(images, 0), torch.stack(targets, 0), metas
 
-def evaluate_map(model, val_loader, device, criterion=None):
+def evaluate_map(model, val_loader, device, criterion=None, max_detections=100):
     """
     Computes exact mAP@0.5 on the validation set using the grading logic.
     Also computes validation loss if criterion is provided.
@@ -114,7 +116,11 @@ def evaluate_map(model, val_loader, device, criterion=None):
                 # Outputs[b] has shape (10, S, S)
                 raw_predictions = decode_predictions(outputs[b], w_orig, h_orig, conf_threshold=0.05)
                 # Apply class-wise NMS
-                final_predictions = non_maximum_suppression(raw_predictions, iou_threshold=0.5)
+                final_predictions = non_maximum_suppression(
+                    raw_predictions,
+                    iou_threshold=0.5,
+                    max_detections=max_detections
+                )
                 
                 # Group predictions by class
                 for pred in final_predictions:
@@ -255,7 +261,9 @@ def train(args):
         scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
         
     best_map = 0.0
+    best_aug_map = 0.0
     best_no_aug_map = 0.0
+    top_checkpoints = []
     scales = [384, 416, 448, 480] # Multi-scale resolutions (multiples of 32)
     
     for epoch in range(args.epochs):
@@ -328,7 +336,13 @@ def train(args):
         
         # 6. Evaluation Phase
         print(f"Calculating Validation Loss & mAP@0.5...")
-        val_map, avg_val_loss = evaluate_map(model, val_loader, device, criterion=criterion)
+        val_map, avg_val_loss = evaluate_map(
+            model,
+            val_loader,
+            device,
+            criterion=criterion,
+            max_detections=args.max_detections
+        )
         
         print(f"Epoch {epoch+1} Summary: Avg Train Loss = {avg_train_loss:.4f} | Avg Val Loss = {avg_val_loss:.4f} | Val mAP@0.5 = {val_map:.4f}")
         
@@ -343,6 +357,33 @@ def train(args):
                 'mAP': val_map,
             }, best_path)
             print(f"⭐ New Best Model saved with mAP@0.5 = {val_map:.4f} at {best_path}")
+
+        # Keep the best checkpoint before no-augment fine-tuning as a safer hidden-test candidate.
+        if (not is_no_aug_phase) and val_map > best_aug_map:
+            best_aug_map = val_map
+            best_aug_path = os.path.join(args.checkpoint_dir, "best_aug.pth")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'mAP': val_map,
+            }, best_aug_path)
+            print(f"New Best Augmented-Phase Model saved with mAP@0.5 = {val_map:.4f} at {best_aug_path}")
+
+        if args.save_top_k > 0:
+            top_path = os.path.join(args.checkpoint_dir, f"top_epoch_{epoch + 1:03d}_map_{val_map:.4f}.pth")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'mAP': val_map,
+            }, top_path)
+            top_checkpoints.append((val_map, top_path))
+            top_checkpoints.sort(key=lambda item: item[0], reverse=True)
+            while len(top_checkpoints) > args.save_top_k:
+                _, remove_path = top_checkpoints.pop()
+                if os.path.exists(remove_path):
+                    os.remove(remove_path)
             
         # Save best model within the No-Augment phase
         if is_no_aug_phase and val_map > best_no_aug_map:

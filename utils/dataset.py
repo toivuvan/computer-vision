@@ -227,6 +227,38 @@ class DetectionDataset(Dataset):
         
         return mosaic_img, mosaic_bboxes, mosaic_labels
 
+    def _clip_valid_boxes(self, bboxes, labels, width, height, min_size=1.0):
+        """Clip boxes to image bounds and keep labels aligned with valid boxes."""
+        clipped_boxes = []
+        clipped_labels = []
+        for bbox, label in zip(bboxes, labels):
+            xmin, ymin, xmax, ymax = bbox
+            xmin = max(0.0, min(float(width), float(xmin)))
+            ymin = max(0.0, min(float(height), float(ymin)))
+            xmax = max(0.0, min(float(width), float(xmax)))
+            ymax = max(0.0, min(float(height), float(ymax)))
+            if (xmax - xmin) >= min_size and (ymax - ymin) >= min_size:
+                clipped_boxes.append([xmin, ymin, xmax, ymax])
+                clipped_labels.append(label)
+        return clipped_boxes, clipped_labels
+
+    def _resize_fallback(self, img_np, bboxes, labels):
+        """Fallback transform that preserves labels if Albumentations rejects an augmentation."""
+        h_orig, w_orig = img_np.shape[:2]
+        img_resized = cv2.resize(img_np, (self.resolution, self.resolution), interpolation=cv2.INTER_LINEAR)
+        scale_x = self.resolution / float(w_orig)
+        scale_y = self.resolution / float(h_orig)
+        scaled_boxes = [
+            [bbox[0] * scale_x, bbox[1] * scale_y, bbox[2] * scale_x, bbox[3] * scale_y]
+            for bbox in bboxes
+        ]
+        scaled_boxes, labels = self._clip_valid_boxes(scaled_boxes, labels, self.resolution, self.resolution)
+        fallback_transform = A.Compose([
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            ToTensorV2()
+        ])
+        return fallback_transform(image=img_resized)['image'], scaled_boxes, labels
+
     def __len__(self):
         return len(self.examples)
 
@@ -243,13 +275,12 @@ class DetectionDataset(Dataset):
                 bboxes = list(transformed['bboxes'])
                 labels = list(transformed['category_ids'])
             except Exception as e:
+                bboxes, labels = self._clip_valid_boxes(bboxes, labels, self.resolution, self.resolution)
                 fallback_transform = A.Compose([
                     A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                     ToTensorV2()
                 ])
                 img_tensor = fallback_transform(image=img_np)['image']
-                bboxes = []
-                labels = []
         else:
             # Standard single-image path
             img_np, bboxes, labels = self._load_image_and_boxes(idx)
@@ -259,14 +290,7 @@ class DetectionDataset(Dataset):
                 bboxes = list(transformed['bboxes'])
                 labels = list(transformed['category_ids'])
             except Exception as e:
-                fallback_transform = A.Compose([
-                    A.Resize(self.resolution, self.resolution),
-                    A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-                    ToTensorV2()
-                ])
-                img_tensor = fallback_transform(image=img_np)['image']
-                bboxes = []
-                labels = []
+                img_tensor, bboxes, labels = self._resize_fallback(img_np, bboxes, labels)
                 
         return img_tensor, bboxes, labels
 
@@ -318,6 +342,8 @@ class DetectionDataset(Dataset):
             yc = (y1 + y2) / 2.0
             w = x2 - x1
             h = y2 - y1
+            if w <= 0.0 or h <= 0.0:
+                continue
             
             # Safe boundary check
             xc = min(0.9999, max(0.0, xc))

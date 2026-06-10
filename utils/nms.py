@@ -95,11 +95,12 @@ def decode_predictions(prediction, img_width, img_height, conf_threshold=0.15):
             
     return decoded_boxes
 
-def non_maximum_suppression(boxes, iou_threshold=0.5):
+def non_maximum_suppression(boxes, iou_threshold=0.5, max_detections=None):
     """
     Perform class-wise Non-Maximum Suppression (NMS) to eliminate overlapping redundant boxes.
     boxes: list of dicts: [{"class": str, "confidence": float, "bbox": [4 values]}]
     iou_threshold: threshold above which overlapping boxes are suppressed
+    max_detections: optional global cap after class-wise NMS, sorted by confidence
     """
     if not boxes:
         return []
@@ -129,4 +130,7 @@ def non_maximum_suppression(boxes, iou_threshold=0.5):
                 if bbox_iou(best_box["bbox"], box["bbox"]) < iou_threshold
             ]
             
+    keep_boxes = sorted(keep_boxes, key=lambda b: b["confidence"], reverse=True)
+    if max_detections is not None:
+        keep_boxes = keep_boxes[:max_detections]
     return keep_boxes

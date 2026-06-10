@@ -18,6 +18,7 @@ def parse_args():
     parser.add_argument("--resolution", type=int, default=448, help="Inference resolution")
     parser.add_argument("--conf_threshold", type=float, default=0.05, help="Confidence threshold")
     parser.add_argument("--iou_threshold", type=float, default=0.50, help="IoU threshold for NMS")
+    parser.add_argument("--max_detections", type=int, default=100, help="Maximum detections per image after NMS")
     return parser.parse_args()
 
 def average_checkpoints(checkpoint_paths, device):
@@ -83,7 +84,7 @@ def main():
     
     # 3. Locate Images
     valid_exts = ('.jpg', '.jpeg', '.png', '.bmp')
-    img_files = [f for f in os.listdir(args.image_dir) if f.lower().endswith(valid_exts)]
+    img_files = sorted(f for f in os.listdir(args.image_dir) if f.lower().endswith(valid_exts))
     print(f"Found {len(img_files)} images in '{args.image_dir}' for prediction.")
     
     predictions_json = []
@@ -120,7 +121,8 @@ def main():
                 # Apply class-wise NMS
                 final_boxes = non_maximum_suppression(
                     raw_boxes, 
-                    iou_threshold=args.iou_threshold
+                    iou_threshold=args.iou_threshold,
+                    max_detections=args.max_detections
                 )
                 
                 # Append result
