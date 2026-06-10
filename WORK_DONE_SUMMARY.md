@@ -58,7 +58,7 @@ Khi `is_train=True`, dataset áp dụng chiến lược tăng cường dữ li�
 #### 3.1.2. Mixup Augmentation (Tăng cường trộn ảnh)
 - **Cơ chế hoạt động**: Lấy ngẫu nhiên hai mẫu ảnh đã qua biến đổi (standard hoặc mosaic), trộn chồng hình ảnh theo tỷ lệ $r$ được rút trích từ phân phối Beta $\beta(8.0, 8.0)$ ($img = img_1 \times r + img_2 \times (1.0 - r)$). Đồng thời, gộp danh sách các bounding boxes và labels của cả hai ảnh lại với nhau.
 - **Tác dụng**: Ép mô hình học được các đặc trưng phi tuyến tính sâu hơn, không bị phụ thuộc quá mức vào các cạnh biên cứng, giảm thiểu overfitting đáng kể khi huấn luyện mô hình sâu trên tập dữ liệu nhỏ.
-- **Tần suất**: Được kích hoạt với xác suất **15%** (`mixup_prob=0.15`) cho tập train và tự động tắt về `0.0` trong giai đoạn No-Augment cuối.
+- **Tần suất**: Được kích hoạt với xác suất **25%** (`mixup_prob=0.25`) cho tập train và tự động tắt về `0.0` trong giai đoạn No-Augment cuối.
 
 #### 3.1.3. Chuỗi Augmentation Albumentations
 Sau khi ảnh đi qua bước Mosaic / Mixup (hoặc giữ ảnh đơn gốc), nó sẽ đi qua chuỗi biến đổi của Albumentations (đối với ảnh Mosaic/Mixup, các bước Crop/Resize sẽ được bỏ qua để tránh méo ảnh):
@@ -271,12 +271,12 @@ mAP@0.5 là thước đo quan trọng để biết mô hình không chỉ dự �
 Từ toàn bộ pipeline trên, project đã hoàn thiện được một hệ thống object detection hoàn chỉnh gồm:
 
 - đọc và chuẩn hóa dữ liệu annotation
-- augmentation dữ liệu khi train tích hợp Mosaic Augmentation (xác suất 50%) và Mixup Augmentation (xác suất 15%), đồng thời hỗ trợ chế độ **No-Augment Epochs** (tắt augment mạnh ở 5 epoch cuối) để tinh chỉnh tọa độ bounding box cực kỳ chuẩn xác, hạn chế tối đa overfitting
+- augmentation dữ liệu khi train tích hợp Mosaic Augmentation (xác suất 50%) và Mixup Augmentation (xác suất 25%), đồng thời hỗ trợ chế độ **No-Augment Epochs** (tắt augment mạnh ở 5 epoch cuối) để tinh chỉnh tọa độ bounding box cực kỳ chuẩn xác, hạn chế tối đa overfitting
 - mã hóa bbox thành lưới anchor-free
 - mô hình ConvNeXt-Tiny (31.7M tham số) + FPN + PANet + Decoupled Detection Heads (đã bổ sung Dropout = 0.4 trong decoupled heads để chống overfit)
 - loss nâng cao kết hợp focal loss (cho objectness), CE loss có trọng số phân bổ lớp nghịch đảo (cho phân loại lớp), CIoU loss và Smooth L1 loss (cho hồi quy hộp)
-- training tối ưu hóa bằng multi-scale, warm-up, AMP (Mixed Precision), AdamW optimizer, differential LR và điều hòa trọng số Weight Decay tăng lên 5e-4
-- suy luận hiệu quả với decode prediction trên grid độ phân giải cao kết hợp class-wise NMS
+- training tối ưu hóa bằng multi-scale, warm-up, AMP (Mixed Precision), AdamW optimizer, differential LR và điều hòa trọng số Weight Decay tăng lên 1e-3
+- suy luận hiệu quả với decode prediction trên grid độ phân giải cao kết hợp class-wise NMS (suy luận tối ưu với ngưỡng confidence cố định là 0.05 và sử dụng checkpoint tốt nhất giai đoạn sạch best_no_aug.pth)
 - đánh giá hiệu năng chính xác bằng mAP@0.5
 
 Nói ngắn gọn, đây là một quy trình detection end-to-end từ dữ liệu thô đến prediction cuối cùng.

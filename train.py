@@ -23,10 +23,10 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training (32 recommended for T4 16GB with ConvNeXt-Tiny + Mosaic/Mixup)")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay")
+    parser.add_argument("--weight_decay", type=float, default=1e-3, help="Weight decay")
     parser.add_argument("--multi_scale", action="store_true", default=True, help="Enable multi-scale training")
     parser.add_argument("--no_aug_epochs", type=int, default=5, help="Number of final epochs to run without strong augmentations")
-    parser.add_argument("--mixup_prob", type=float, default=0.15, help="Mixup augmentation probability")
+    parser.add_argument("--mixup_prob", type=float, default=0.25, help="Mixup augmentation probability")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     return parser.parse_args()
 
@@ -60,9 +60,10 @@ def collate_fn(batch):
     metas = [item[2] for item in batch]
     return torch.stack(images, 0), torch.stack(targets, 0), metas
 
-def evaluate_map(model, val_loader, device):
+def evaluate_map(model, val_loader, device, criterion=None):
     """
     Computes exact mAP@0.5 on the validation set using the grading logic.
+    Also computes validation loss if criterion is provided.
     """
     model.eval()
     
@@ -75,10 +76,16 @@ def evaluate_map(model, val_loader, device):
     # Total ground truth boxes counter
     gt_counts = {cls: 0 for cls in classes}
     
+    val_loss = 0.0
     with torch.no_grad():
-        for images, _, metas in val_loader:
+        for images, targets, metas in val_loader:
             images = images.to(device)
+            targets = targets.to(device)
             outputs = model(images)  # (batch, 10, S, S)
+            
+            if criterion is not None:
+                loss = criterion(outputs, targets)
+                val_loss += loss.item()
             
             for b in range(images.shape[0]):
                 img_id = metas[b]['image_id']
@@ -172,7 +179,8 @@ def evaluate_map(model, val_loader, device):
         aps.append(ap)
         
     mAP = np.mean(aps) if aps else 0.0
-    return mAP
+    avg_val_loss = val_loss / len(val_loader) if criterion is not None else 0.0
+    return mAP, avg_val_loss
 
 def train(args):
     set_seed(args.seed)
@@ -247,6 +255,7 @@ def train(args):
         scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
         
     best_map = 0.0
+    best_no_aug_map = 0.0
     scales = [384, 416, 448, 480] # Multi-scale resolutions (multiples of 32)
     
     for epoch in range(args.epochs):
@@ -254,7 +263,8 @@ def train(args):
         
         # Check if we should disable strong augmentations (Mosaic, Affine, Cutout, etc.) for the final fine-tuning phase.
         # Uses >= to support seamless resuming from checkpoints within the final phase.
-        if epoch >= (args.epochs - args.no_aug_epochs):
+        is_no_aug_phase = epoch >= (args.epochs - args.no_aug_epochs)
+        if is_no_aug_phase:
             train_dataset.disable_strong_augmentations()
         
         # 5. Multi-Scale Training: pick a random resolution at the start of each epoch
@@ -313,10 +323,10 @@ def train(args):
         avg_train_loss = epoch_loss / len(train_loader)
         
         # 6. Evaluation Phase
-        print(f"Calculating Validation mAP@0.5...")
-        val_map = evaluate_map(model, val_loader, device)
+        print(f"Calculating Validation Loss & mAP@0.5...")
+        val_map, avg_val_loss = evaluate_map(model, val_loader, device, criterion=criterion)
         
-        print(f"Epoch {epoch+1} Summary: Avg Train Loss = {avg_train_loss:.4f} | Val mAP@0.5 = {val_map:.4f}")
+        print(f"Epoch {epoch+1} Summary: Avg Train Loss = {avg_train_loss:.4f} | Avg Val Loss = {avg_val_loss:.4f} | Val mAP@0.5 = {val_map:.4f}")
         
         # 7. Checkpoint Saving (Save best checkpoint)
         if val_map > best_map:
@@ -330,9 +340,26 @@ def train(args):
             }, best_path)
             print(f"⭐ New Best Model saved with mAP@0.5 = {val_map:.4f} at {best_path}")
             
-        # Also save latest checkpoint
+        # Save best model within the No-Augment phase
+        if is_no_aug_phase and val_map > best_no_aug_map:
+            best_no_aug_map = val_map
+            best_no_aug_path = os.path.join(args.checkpoint_dir, "best_no_aug.pth")
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'mAP': val_map,
+            }, best_no_aug_path)
+            print(f"✨ New Best No-Augment Model saved with mAP@0.5 = {val_map:.4f} at {best_no_aug_path}")
+            
+        # Also save latest checkpoint with full metadata
         latest_path = os.path.join(args.checkpoint_dir, "latest.pth")
-        torch.save(model.state_dict(), latest_path)
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'mAP': val_map,
+        }, latest_path)
 
     print(f"\nTraining completed! Best Validation mAP@0.5 = {best_map:.4f}")
 
